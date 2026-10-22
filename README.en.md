@@ -23,7 +23,7 @@ protocol** from the mini program bundle and ships two ready-to-use controllers:
 
 1. Open https://emfox.github.io/QUANGE-Controller/ in **Chrome on Android**
 2. Long-press the button on the device for **3 seconds** to power it on
-3. Tap *Connect* → pick the device (it may appear as `QUANGE-WY020702` **or** `kHID`)
+3. Tap *Connect* → pick the device (normally `QUANGE-WY020702`, possibly the module default `kHID`)
 4. Tap *Read from device* → add/remove entries → *Save to device*
 
 The page shows live state: idle / sterilizing with countdown, next run, battery, firmware version
@@ -46,12 +46,14 @@ python tools/set_timer.py --version                 # read the firmware version 
 python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not connect
 ```
 
-Device names default to the `QUANGE` / `Hi-` / `kHID` prefixes (same as the web app). If the
-scan comes up empty, address it directly:
+Device names default to the `QUANGE` / `Hi-` / `kHID` prefixes, plus a fallback match on the
+`0x1812` / `0x180F` services in the advertisement (so a renamed device is still found — same as
+the web app). If the scan comes up empty, address it directly:
 
 ```bash
 python tools/set_timer.py -a AA:BB:CC:DD:EE:FF --query
 python tools/set_timer.py -n kHID --query            # match one prefix only
+python tools/set_timer.py --version                  # read firmware version (sends DB 01 A4)
 ```
 
 ---
@@ -108,7 +110,7 @@ Full field descriptions, reply parsing and the init sequence:
 | Item | Value |
 | --- | --- |
 | Model | WY020702 |
-| Advertising name | `QUANGE-WY020702` **or** `kHID` (it alternates) |
+| Advertising name | `QUANGE-WY020702` (normal) **or** `kHID` (module factory default; harmless) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | SoC | Telink, PnP ID `0x248A:0x6682` |
 | Power | 3 × AA cells, BLE only, no Wi-Fi |
@@ -143,9 +145,13 @@ In short: **the bundle must be decrypted; the protocol does not.**
 
 ## Known limitations
 
-- **The advertising name alternates**: observed flipping between `QUANGE-WY020702` and `kHID`,
-  while the GAP name is `Hi-YM01-…`. Both the web app and the script therefore match the
-  **`QUANGE` / `Hi-` / `kHID` prefixes** — all three. If the scan still misses it, connect by MAC
+- **The advertising name isn't always `QUANGE-WY020702`**: `kHID` is the Bluetooth module's
+  factory-default name (meaning the user config area was reset), not "the device alternating
+  between two names". The good news is that **functionality is unaffected** — `0x1812` in the
+  advertisement is firmware behaviour, and the business service `0xFB` works normally once
+  connected. The vendor app only accepts `QUANGE-WY020702`, so it actually can't see the device in
+  the `kHID` state. This project matches **three name prefixes + the `0x1812`/`0x180F` services**,
+  so a renamed device is still found; failing that, connect by MAC
   (`-a <MAC>` in the script, *Show all devices* in the web app);
 - **The device stops advertising while connected**: a BLE peripheral halts advertising once a
   central connects, so **only one host can control it at a time**. While your phone is connected
@@ -158,6 +164,17 @@ In short: **the bundle must be decrypted; the protocol does not.**
   are front-end checks; whether the firmware also enforces is unverified);
 - Whether the schedule survives a battery swap is untested (it should — it appears to live in
   flash);
+- **Usage history is permanently lost**: the history never lives on the device — the mini program
+  streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`, then reads it back through
+  `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
+  are no longer recorded and the day/week/month charts are gone for good. `--log` still reads the
+  records currently on the device, but there's nowhere to keep them.
+  See [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
+- **The device name can't be changed**: `get_device_config` / `update_device_config` are both
+  cloud endpoints; the name only ever lives on the server and in local storage and is **never
+  written to the device**. Unavailable now;
+- `DB 01 A0` (device reset) is **deliberately not implemented** — the vendor sends it on unbind,
+  it may wipe the schedule, and it has no non-destructive use;
 - **Firmware update is no longer possible**: the mini program ships a complete OTA implementation
   (Telink-style OTA with CRC16 chunking), but both the update check and the download go through
   `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is

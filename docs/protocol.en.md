@@ -10,13 +10,26 @@
 
 | Item | Value |
 | --- | --- |
-| Advertising name | `QUANGE-WY020702` **or** `kHID` — the device alternates between the two |
+| Advertising name | `QUANGE-WY020702` (normal) **or** `kHID` (the module's factory default, see note below) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | Advertising payload | Service UUIDs `0x1812` (HID) + `0x180F` (Battery); manufacturer data starts with the MAC prefix |
 | SoC | Telink, PnP ID `0x248A:0x6682` |
 | Pairing | **Not required** — no pairing, no bonding, no encryption |
 | Frame encryption | **None** — plaintext hexadecimal |
 | Checksum | **None** — no CRC (OTA excepted) |
+
+> **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
+> product's brand name. Treating it as "the device normally alternates between two names" is a
+> misreading — the likelier explanation is that the user config area was reset, or was never
+> written at the factory.
+>
+> This **does not affect functionality**: `0x1812` in the advertisement is firmware behaviour,
+> independent of the name, and the business service `0xFB` works normally once connected.
+>
+> Conversely, **the original mini program only accepts `QUANGE-WY020702`** (hardcoded twice in
+> `conble.js`), so it cannot find the device while it advertises as `kHID` — a bug in the vendor
+> code, not a faulty device. Our `phone.html` / `set_timer.py` accept three prefixes plus the
+> HID service, so they connect in either state.
 
 > **Do not conflate two things.** "No encryption" here refers to the **BLE frames on the air**.
 > The mini program bundle itself **is** encrypted (a `V1MMWX` container: drop the 6-byte header,
@@ -328,8 +341,9 @@ Three steps are enough to change the schedule:
 
 ```python
 # 1. connect over BLE
-#    the advertising name may be QUANGE-WY020702, or switch to kHID (and there is a Hi- prefix)
+#    the advertising name may be QUANGE-WY020702, or the module default kHID (GAP name starts Hi-)
 #    -- accept all three prefixes, or just connect by MAC. Do not hard-code "QUANGE" only.
+#    Also: the device advertises 0x1812 (HID), which is more reliable to scan for than a name.
 # 2. write  DB 08 08 <count> <HH> <MM> <0D>  to 00001001-... (write-without-response)
 # 3. write  DB 04 02 + unix_seconds to the same characteristic, subscribe to 1002 to confirm
 ```

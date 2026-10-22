@@ -132,18 +132,25 @@ python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --ra
 
 ### 3.1 页面职责
 
+共 13 个页面 + 5 个组件，全部逻辑都在 `app-service.js` 里。
+
 | 页面 | 作用 |
 | --- | --- |
-| `index` | 主页，显示状态、倒计时、电量、下次消杀时间 |
-| `init` | 启动页，先请求 `get_access_token`，**服务器挂了所以永远卡在这里** |
-| `conble` | 扫描并连接设备，连接后跑初始化时序 |
+| `index` | 主页，显示状态、倒计时、电量、下次消杀时间，**全部 BLE 收包处理都在这里** |
+| `init` | 启动页，串行跑 `get_3rd_session` → `get_user_info`，**服务器挂了所以永远卡在这里** |
+| `conble` | 扫描并连接设备（按 HID 服务 `0x1812` 扫，见 §3.3） |
 | `timing` | 定时列表，可编辑/删除 |
 | `addtiming` | 新建定时（时间 + 3~6 分钟时长） |
-| `edittiming` | 编辑已有定时 |
-| `history` | 消杀历史（本地 Storage 的 `logDataList`） |
+| `edittiming` | 编辑/删除已有定时 |
+| `history` | 消杀历史 —— 数据在**服务器**，见 §5.2 |
 | `set` | 设备名修改、解绑/删除设备 |
-| `deviceInfo` | 版本号、OTA 入口 |
-| `problem` / `logs` / `test` | 帮助、启动日志、自测 |
+| `deviceInfo` | 展示缓存里的版本号（`Version`），只读 |
+| `problem` | 常见问题 + **客服联系方式**（见 §7） |
+| `logs` / `test` | 启动时间戳日志 / 原厂开发者调试页（见 §3.4） |
+
+组件 `blepop` / `inputPop` / `navbar` / `popup` / `timepop` 都是纯 UI 弹窗壳子，
+其中 `timepop` 内写死时长候选 `[3,4,5,6,7,8,9,10]`，`addtime` 与 `edittiming` 又各自
+限定成 `[3,4,5,6]` —— 实际只能选 **3~6 分钟**。
 
 ### 3.2 关键代码位置（`app-service.js`）
 
@@ -170,6 +177,151 @@ n = Number(t.data.value[1]) < 16 ? "0" + ... : ...;     // 分钟
 o = l;
 var s = "DB08080" + t.data.len + t.data.listvalue + e + n + o;
 ```
+
+注意 `"DB08080"` 这个字符串只有 7 个十六进制字符，末位 `0` 与 `len` 拼成同一个字节 ——
+`len=2` 时得到 `DB 08 08 02 …`，即"低半字节写条数"。`edittiming.js` 的写法
+`"DB08080"+(listLen+1)+a.join("")` 完全一致，**没有"追加"和"整表覆盖"两种帧，
+永远是把整张表重写一遍**。
+
+### 3.3 扫描用的是 HID 服务，不是业务服务
+
+`conble.js` 里的原文：
+
+```js
+wx.startBluetoothDevicesDiscovery({
+  services: ["00001812-0000-1000-8000-00805F9B34FB"],   // HID，不是 0xFB
+  success: function (t) {
+    setTimeout(function () { o.stopBluetoothDevicesDiscovery() }, 60000)   // 60 秒超时
+    setTimeout(function () { e.getBluetoothDevices(), e.onBluetoothDeviceFound() }, 2000)
+  }
+})
+```
+
+这里有两个反直觉的点：
+
+1. **按 `0x1812`（HID 服务）过滤，而不是它自己用的 `0xFB`** —— 说明设备的广播包里
+   一定带 `0x1812`，而 `0xFB` 只在连接后才出现。这也解释了 §6 里 `kHID` 这个名字的由来：
+   设备出厂固件是当 HID 设备（自拍器/键盘类）做的，改造成杀菌盒时没改广播配置。
+2. **广播名过滤写死成 `"QUANGE-WY020702"`**，`getBluetoothDevices` 和
+   `onBluetoothDeviceFound` 两处都是：
+
+   ```js
+   "QUANGE-WY020702" == t.devices[a].localName && e.setData({ list: ... })
+   ```
+
+   **原厂小程序不认 `kHID`，也不认 `Hi-`。** 一旦设备改名或退化成模块默认名，
+   原厂 App 就再也扫不到了 —— 这大概率就是很多人"小程序搜不到设备"的原因。
+
+iOS 还走一条特殊分支：从广播包里抠 MAC。
+
+```js
+"iOS" == e.data.system && (
+  t.devices[o].IosdeviceId = e.jiequ(e.ab2hex(t.devices[o].advertisData), 2)
+)
+```
+
+即把 `advertisData` 转成 hex、按 2 字节切开、再用 `:` 连起来 —— 也就是
+**Manufacturer Data 的前 6 字节就是 MAC**（与 §附录里的广播结构一致）。
+Android 直接用系统的 `deviceId`（本身就是 MAC），iOS 因为系统不给 MAC 才要自己解析。
+
+扫描结果按 RSSI 排序后再展示。扫描失败会上报 `uploads_user_mobile_info`
+（带 `locationEnabled` / `bluetoothEnabled`），是原厂的排障埋点。
+
+### 3.4 `test` 页是原厂开发者调试页
+
+`pages/test/test.js` 没有被任何页面链接，但代码完整保留在包里，且**硬编码了
+开发者自己的设备 MAC**：
+
+```js
+deviceId: "AE:C1:38:6E:5F:13"       // 出现 2 次，写死在 notify 和 writeBle 里
+```
+
+它提供的能力：
+
+| 方法 | 行为 |
+| --- | --- |
+| `getState` | 发 `"DB0402" + (Date.now()/1000).toString(16)` —— 对时 + 查状态 |
+| `startKill` | 发 `DB020401` —— 直接启动杀菌 |
+| `stopKill` | 发 `DB020400` —— 直接停止 |
+| `EditKill` | 把输入框里的**任意 hex 原样发出去** |
+
+也就是说，只要你能跑起这个页面（改一下 `deviceId`），就有一个现成的任意指令发送器。
+不过我们的 `phone.html` 和 `tools/set_timer.py` 已经覆盖了这些能力，且不写死 MAC。
+
+### 3.5 收包分派链（`index.js` 的 `notify`）
+
+`notify` 里注册的 `onBLECharacteristicValueChange` 是整个 App 唯一处理设备回包的地方，
+分派方式是**取前 6 个 hex 字符做精确等值比较**：
+
+```js
+var a = t.buf2hex(i.value).substring(0, 6);
+if ("bd06a2" == a) { ... }          // 固件版本 → 触发 OTA 检查
+else if ("bd0e02" == a) { ... }     // 状态（带额外字段）
+else if ("bd0805" == a || "bd0806" == a) { ... }   // 一条日志记录
+else if ("bd0705" == a) { ... }     // 日志流结束标记
+else if ("bd1102" == a || "bd0002" == a || "bd0202" == a) { ... }  // 开关回包
+else if ("bd0b02" == a) { ... }     // 状态（查询用）
+else if ("bd0d07" == a) { ... }     // 定时列表
+else if ("bd0d08" == a) { ... }     // 定时写入成功，2 秒后返回上一页
+else if ("bd05a1" == a) { t.setData({ DLwran: !0 }) }  // 低电量警告
+```
+
+`bd0e02` 和 `bd0b02` 的处理逻辑**逐行重复**，是复制粘贴留下的。两者都不做长度校验，
+直接读 `substring(18,26)` 当"下次消杀时间戳"—— 这就是 §5.1 那个"会读出 1970 年"的坑。
+
+一个容易忽略的细节：`bd0805`/`bd0806` 分支里，只有 `action_type` 为 `00` 或 `01`
+**且** 起始时间戳不是 `ffffffff` 时才写本地日志并向设备回 ACK：
+
+```js
+var p = "DB060601" + t.data.resStr.substring(6,14);   // ACK，原样回带时间戳
+t.writeBle(t.data.deviceId, t.data.serviceId, p);
+```
+
+而当 `g=="00"` 且时间戳恰好是 `ffffffff` 时，转去 `syncLogData()` ——
+**这就是"日志读完了"的判定条件**：空槽位的 `FF FF FF FF` 时间戳。
+
+`bd0705` 分支则对 `continuous != 0` 的记录补一条，然后立刻 `syncLogData()`，
+说明它是"最后一条/汇总"帧。
+
+### 3.6 原厂代码里的 bug（都会影响真实使用）
+
+读全部 23 个模块后确认的问题，按严重程度排：
+
+| # | 位置 | 问题 | 后果 |
+| --- | --- | --- | --- |
+| 1 | `addtime.js` `saveTiming` | 校验循环里 `for` 内先 `setData({isAdd:!0})`，但 `break` 时不重置；单条定时分支 `a[0].min+59<r\|\|a[0].min>r+59` 的运算符优先级写反，实际判定是 `(a+59 < r) \|\| (a > r+59)` 恒等于"相差超过 59 分钟"，**恰好 59 分钟边界放行、60 分钟也放行**，但"新建时间早于已有时间"时会误判 | 边界情况能存进去，但和 FAQ 说的"间隔不小于 1 小时"不完全一致 |
+| 2 | `addtime.js` `saveTiming` | `1380` 检查写成 `r - a[0].min <= 1380`，**只对第一条已存在定时比**，不是整表跨度 | 3~4 条定时可能整体跨度超 23 小时 |
+| 3 | `edittiming.js` `preData` | 拼 `r` 数组时跳过 `l != n`，之后却用 `r[0].min` 当基准 —— `r[0]` 不一定是时间最早的那条 | 跨度校验基准错位 |
+| 4 | `edittiming.js` `preData` | `a = Number(a).toString(16)` 不补零，`timing` 若是 `0x0a` 会得到 `"a"` 单字符，与后面 `"0"+t` 的写法不一致 | 理论上时长 ≥10 分钟会发出错帧（UI 限 3~6，实际触发不到） |
+| 5 | `index.js` `SendBlePkg` | `for (e = 0; e <= updata_press; e++)` 用了 `<=`，而 `updata_press` 已是块数（ceiling），**会多发一包全 `FF` 的块** | OTA 帧数比实际文件多 1；若设备严格校验可能失败 |
+| 6 | `index.js` `SendBlePkg` | `e % 256` / `e / 256` 未取整，`parseInt` 兜住但语义模糊 | 大固件（> 256 块 = 4KB）后 seq 计算依赖 JS 隐式转换 |
+| 7 | `index.js` `StartOTA` | 结束帧 `d = new Uint8Array(8)` 只赋了 `[0]..[5]`，`[6][7]` 保持 0 —— 注释写的是 "8 字节 + CRC16"，实际是 6 字节有效 + 2 字节零 | 与文档描述一致，但"`[6..7]=00 00`"是默认值而非显式写 |
+| 8 | `index.js` `upVal` 进度 | `Math.round(updata_press/100)*upVal <= cnt` 这个表达式恒真/恒假取决于量级，进度条基本不动 | 纯 UI，不影响功能 |
+| 9 | `conble.js` | 广播名写死 `QUANGE-WY020702`，不认 `kHID` / `Hi-`（见 §3.3） | 设备改名后原厂 App 扫不到 |
+| 10 | `test.js` | 硬编码开发者 MAC `AE:C1:38:6E:5F:13` | 该页面对任何其他设备都无效 |
+
+这些问题我们的 `phone.html` 和 `tools/set_timer.py` **都已经避开**：
+校验改用与 FAQ 一致的"最小间隔 59 分钟 + 首个定时起 23 小时跨度"，
+帧拼装全部走显式字节数组，不依赖字符串拼接。
+
+### 3.7 设备名是服务器存的，不是设备里的
+
+`set.js` 的 `getName` / `_confirmInput` 全部走云端：
+
+```js
+GET /wx_mini/v1/hilinkdevice/get_device_config?mac=...    → device_name
+GET /wx_mini/v1/hilinkdevice/update_device_config?mac=...&name=...
+```
+
+设备名只存在服务器和本地 Storage（`deviceName`），**从来不写给设备**。
+服务器没了以后，`getName` 永远失败，但代码里有个兜底：
+
+```js
+"" != o ? (...set deviceName...) : e.setData({ deviceName: "智能杀菌牙刷杯架", ... })
+```
+
+这就是仓库里产品名统一成"智能杀菌牙刷杯架"的依据（`app-service.js` 里出现 2 次，
+`index.js` 的 `getdeviceName` 里也有同样的兜底）。
 
 ---
 
@@ -329,9 +481,61 @@ DNS:  api.sh-lifefun.cn → 182.92.167.52   （记录还在）
 **理论上**，只要能拿到一个 `.bin`，按 5.1.4 的分包规则是可以手写刷入的。
 但风险很高（写坏即变砖，且没有原厂固件可回滚），**不建议在没有原厂固件的前提下尝试**。
 
-> 顺带：如果你只是想把 `DB 06 A2` 的原始回包抓出来看看，用
-> `python3 tools/set_timer.py --query` 会把所有回包 dump 到日志里，
-> 但版本帧需要单独发 `DB 01 A4` —— 目前脚本没有这个参数，可临时加一行。
+> 顺带：想看 `BD 06 A2` 的原始回包，直接跑
+> `python3 tools/set_timer.py --version`（发 `DB 01 A4` 并解析版本号）。
+> 完整回包 hex 会打在日志里，方便核对 `[15:16]+[17:18]` 这个取值下标。
+
+---
+
+## 5.2 消杀历史记录：全部在云端，已永久丢失
+
+这一点之前漏了，但影响不小 —— **`history` 页的数据完全不在设备里**。
+
+`history.js` 的 `getLogData`：
+
+```js
+var e = {
+  rd_session: wx.getStorageSync("session"),
+  mac:        wx.getStorageSync("deviceId"),
+  log_type:   a.data.idx,           // 1=日  2=周  3=月
+  date_value: a.data.dDeviation      // 相对今天的偏移，0=今天，-1=昨天
+};
+t.Get("/wx_mini/v1/device/get_device_use_log", e, function (t) {
+  // 累加每条记录的 continuous 字段得到"累计消杀"
+  for (var e = 0, i = 0; i < t.data.list.length; i++) e += t.data.list[i].continuous;
+  ...
+})
+```
+
+设备侧的日志是**流式推上来的**，App 收到后立刻转存服务器：
+
+| 方向 | 接口 | 触发时机 |
+| --- | --- | --- |
+| 设备 → App | `DB 01 05` 后有 `BD 08 05` / `BD 08 06` 逐条推 | 每次连上设备 |
+| App → 服务器 | `/wx_mini/v1/device/uploads_device_use_log` | 每收完一条（`syncLogData`） |
+| 服务器 → App | `/wx_mini/v1/device/get_device_use_log` | 打开 `history` 页 |
+| App → 设备 | `DB 06 06 01` + 时间戳 | 每条日志的 ACK，设备收到才会发下一条 |
+
+服务器记录的字段结构（从 `toDayList` 反推）：
+
+```
+start_time   形如 "MM/DD HH:MM"，注意不是标准日期格式（toDate 用 split("/") 解析）
+continuous   持续秒数（整数）
+action_type  动作类型
+```
+
+**服务器下线后，这条链路彻底断了。** 后果：
+
+1. 新的消杀记录**不会再被保存** —— 设备内存里的记录是环形缓冲，写满就覆盖；
+2. 历史曲线（日/周/月三个视图）**永久不可用**；
+3. 用 `tools/set_timer.py --log` 仍然可以**当场把设备里的记录读出来**，
+   只是读出来的东西没法再存到云上，也没有现成的图形界面。
+
+> 如果你确实想留档，目前唯一办法是定期跑一次 `--log` 把输出存成文本。
+> 设备里大概能存多少条、什么时候覆盖，`app-service.js` 里没有体现，需要实测。
+
+`syncLogData` 还有一个值得注意的细节：上报失败时会**自动重新 `wx.login` 换 session 再重试**，
+说明 `rd_session` 是有有效期的 —— 这也能反推出为什么 `init` 页每次启动都要重新拿 session。
 
 ---
 
@@ -350,3 +554,87 @@ HiLink 平台命名，GATT 里也确实带着华为 HiLink 的服务模板：
 它从来没走过华为的认证配网流程。
 
 > 结论：不要被 GATT 结构误导。看到 HiLink 服务不等于真的在用 HiLink 协议。
+
+---
+
+## 7. 原厂客服联系方式（`problem` 页里的）
+
+`pages/problem/problem.js` 的 `problemList` 第一项就是联系方式，直接抄下来：
+
+```
+微信：laifeng-sh
+电话：400-009-8685
+电话客服工作时间：9:00-18:00
+```
+
+其余四条 FAQ 是：
+
+| 问题 | 原厂回答 |
+| --- | --- |
+| 消杀时间设置失败？ | 请注意两次定时消杀时间间隔不小于 1 小时，且最多设置四条消杀，最少一条。 |
+| 设备连接缓慢或多次连接不上？ | 请在后台清除微信和小程序，并重启蓝牙和定位。 |
+| 固件升级失败？ | 升级过程中请尽量确保手机靠近设备且保持连接。 |
+| 开启了蓝牙及定位仍无法连接？ | 请确保微信定位以及蓝牙已授权。 |
+
+**注意：** 品牌（全格家居）公众号已停更，但这个 400 电话和微信号是写在 2022 年包里的小程序
+客服入口，是否还能打通需要实测。如果能联系上，最值得问的两件事是：
+
+1. 还有没有可用的固件文件（用于理论上的手动刷入）；
+2. 新版小程序包（如果有），哪怕只拿到 `.wxapkg` 也能再挖一轮。
+
+---
+
+## 8. 这台设备到底有哪些能力（全量清单）
+
+把 23 个模块、全部 `DB` 开头的指令串穷举后的结果 —— 这就是原厂 App 能做的**全部**事情：
+
+| 能力 | 指令 | 我们是否已实现 | 说明 |
+| --- | --- | --- | --- |
+| 对时 | `DB 04 02` + unix 秒(4B) | ✅ | 每次连接都会发，是后续一切的前提 |
+| 查状态 | `DB 04 02` + 时间戳 | ✅ | 回 `BD 0B 02` / `BD 0E 02`，带电量与下次时间 |
+| 启动杀菌 | `DB 02 04 01` | ✅ | |
+| 停止杀菌 | `DB 02 04 00` | ✅ | |
+| 读定时表 | `DB 01 07` | ✅ | 回 `BD 0D 07` |
+| 写定时表 | `DB 08 08` + 条数 + 整表 | ✅ | 新建/编辑都是整表覆盖 |
+| 删定时 | `DB 00 08` + 剩余条数 + 保留项 | ✅ | |
+| 读日志 | `DB 01 05` | ✅ | 流式推 `BD 08 05`/`BD 08 06` |
+| 日志 ACK | `DB 06 06 01` + 时间戳 | ✅ | 不回 ACK 设备不推下一条 |
+| 读固件版本 | `DB 01 A4` | ✅ | 回 `BD 06 A2` |
+| 设备复位 | `DB 01 A0` | ⚠️ **未实现，也不建议加** | 解绑时发，可能清掉定时表 |
+| 低电量警告 | （设备主动推 `BD 05 A1`） | ⚠️ 未处理 | 原厂收到后禁止启动杀菌并提示换电池 |
+| 固件升级 | OTA 通道 + Telink 协议 | ❌ | 服务器已下线，见 §5.1 |
+| 改设备名 | 云端接口，**不碰设备** | ❌ | 服务器已下线，见 §3.7 |
+| 消杀历史 | 云端接口，**设备只缓存** | ❌ | 服务器已下线，见 §5.2 |
+
+**没有**的：LED/灯光控制、童锁、定时之外的场景模式、固件参数配置、
+灵敏度调节、声音开关 —— 全部 23 个模块里一个都没有。这个设备的可调项就是
+**"最多 4 条定时，每条 = 时间 + 3~6 分钟时长"**，别无其他。
+
+### 8.1 一个好消息：`kHID` 状态可能不是什么坏事
+
+之前仓库里写"广播名在 `QUANGE-WY020702` 和 `kHID` 之间来回切"，
+现在看完 `conble.js` 可以更准确地说：
+
+- `kHID` 是模块（Telink/YC）的**出厂默认广播名**，说明设备的用户配置区可能被复位了，
+  或者压根没写进去；
+- 但**广播里带 `0x1812` 服务**是固件行为，和名字无关 —— 所以即使叫 `kHID`，
+  设备的业务服务 `0xFB` 依然在，功能不受影响；
+- 原厂 App 只认 `QUANGE-WY020702`，所以它在 `kHID` 状态下搜不到 —— **这是原厂的锅，不是设备坏了**。
+
+我们的 `phone.html` 和 `set_timer.py` 认三个前缀，所以在两种状态下都能连上。
+
+---
+
+## 9. 复盘：这台设备还能用多久
+
+| 风险 | 判断 |
+| --- | --- |
+| App 不能用了 | ✅ 已解决，网页版 + Python 脚本都能改定时 |
+| 服务器挂了影响功能 | ✅ 不影响核心控制，只损失历史记录、改名、OTA |
+| 电池 | ⚠️ 电量低于阈值会推 `BD 05 A1` 并拒绝启动 —— 需要换电池 |
+| 固件写坏 | ⚠️ 无原厂固件可回滚，别乱试 OTA |
+| UV 灯管老化 | ⚠️ 汞灯/LED 都有寿命，属于耗材，无法通过软件得知 |
+| 蓝牙模块失效 | ❌ 无替代方案，设备就变普通牙刷架 |
+
+结论：**软件层面已经彻底盘干净了**，剩下的都是硬件寿命问题。
+把定时设成你想要的时间，然后这份文档就可以封存了。
