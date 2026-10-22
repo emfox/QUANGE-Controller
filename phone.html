@@ -101,8 +101,8 @@
     </button>
   </div>
   <p class="hint" style="margin:10px 0 0">
-    设备开机后的广播名可能是品牌名，也可能是模块默认名 <b>kHID</b> —— 两个都认。
-    列表为空时多等几秒再点一次。
+    设备开机后的广播名可能是品牌名，也可能是模块默认名 <b>kHID</b>；
+    同时也按广播里的 HID 服务筛选，所以改了名也能找到。列表为空时多等几秒再点一次。
   </p>
 </div>
 
@@ -172,7 +172,10 @@
   const NAME_FILTERS = [
     { namePrefix: "QUANGE" },
     { namePrefix: "Hi-" },
-    { namePrefix: "kHID" }
+    { namePrefix: "kHID" },
+    // 广播里带 HID 服务是固件行为，比名字可靠 —— 原厂小程序就是按这个扫的
+    { services: [0x1812] },
+    { services: [0x180F] }
   ];
 
   const $ = id => document.getElementById(id);

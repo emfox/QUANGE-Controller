@@ -47,6 +47,26 @@ def _norm(a: str) -> str:
 DEFAULT_NAME_PREFIXES = ("QUANGE", "Hi-", "kHID")
 DEFAULT_NAME_SPEC = "|".join(DEFAULT_NAME_PREFIXES)
 
+# 设备广播里一定带 0x1812(HID) —— 这是固件行为，与广播名无关，比名字可靠。
+# 原厂小程序就是只按这个服务扫的（conble.js: services:["00001812-..."]）。
+HID_SERVICE = "00001812-0000-1000-8000-00805f9b34fb"
+BATT_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb"
+
+
+def _uuid_match(adv, want: str) -> bool:
+    """判断广播里是否声明了某个服务（bleak 给的是短 UUID 或全 UUID，都要能对上）"""
+    keys = {want.lower(), want[:8].lower(), want[4:8].lower()}
+    for u in (adv.service_uuids or []):
+        ul = u.lower()
+        if ul in keys or ul.startswith(want[:8].lower()):
+            return True
+    return False
+
+
+def _looks_like_device(adv) -> bool:
+    """不看名字，只看广播内容 —— 名字可能被改成任何东西，服务列表不会"""
+    return _uuid_match(adv, HID_SERVICE) or _uuid_match(adv, BATT_SERVICE)
+
 
 def _name_match(nm: str, spec: str) -> bool:
     """spec 里的 '|' 或 ',' 表示多个可选前缀，只要命中其一就算匹配
@@ -68,7 +88,11 @@ def _name_match(nm: str, spec: str) -> bool:
 
 async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.0,
                       quiet=False):
-    """扫一遍并按 MAC / 名字找设备，返回 (BLEDevice, AdvertisementData) 或 (None, None)"""
+    """扫一遍并按 MAC / 名字找设备，返回 (BLEDevice, AdvertisementData) 或 (None, None)
+
+    匹配顺序：MAC > 名字前缀 > 广播服务特征（0x1812/0x180F）。
+    最后一档是为了兜住「设备被改成任意广播名」的情况 —— 服务列表改不了。
+    """
     if not quiet:
         print(f"[*] 扫描 {timeout:.0f}s ……")
     found = await scan_all(timeout)
@@ -85,12 +109,21 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
             if _name_match(nm, name):
                 hits.append((dev, adv, 1))
 
+    # 兜底：名字对不上但广播内容像 —— 设备改名后名字匹配会失效，服务列表不会
+    seen = {id(h[0]) for h in hits}
+    for addr, (dev, adv) in found.items():
+        if id(dev) in seen:
+            continue
+        if _looks_like_device(adv):
+            hits.append((dev, adv, 2))
+
     if hits:
         hits.sort(key=lambda x: (x[2], -((x[1].rssi if x[1].rssi is not None else -999))))
-        dev, adv, _ = hits[0]
+        dev, adv, how = hits[0]
         if not quiet:
+            tag = {0: "按 MAC", 1: "按名字", 2: "按广播服务"}[how]
             print(f"[+] 命中 {adv.local_name or dev.name or '(无名)'} @ {dev.address} "
-                  f"({adv.rssi} dBm)")
+                  f"({adv.rssi} dBm, {tag})")
         return dev, adv
 
     if not quiet:
@@ -99,8 +132,8 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
         for dev, adv in rows[:20]:
             print(f"    {str(adv.rssi):>4}dBm  {adv.local_name or dev.name or '(无名)':26}  {dev.address}")
         print("    —— 若目标不在列表里：确认已长按 3 秒开机；把手机蓝牙关掉避免被占；换新电池。")
-        print("    —— 已知广播名会在 QUANGE-WY020702 和 kHID 之间来回切，")
-        print("       扫不到就再扫一次，或用 -a <MAC> 直接指定地址。")
+        print("    —— 广播名可能是 QUANGE-WY020702，也可能退化成模块默认名 kHID。")
+        print("       已经按 0x1812/0x180F 服务兜底匹配过，仍是空的话用 -a <MAC> 直接指定。")
     return None, None
 
 
