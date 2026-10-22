@@ -141,7 +141,8 @@
     <button id="btnReadLogs" class="ghost">读取记录</button>
   </div>
   <p class="hint" style="margin:12px 0 0">
-    设备逐条推送记录，收到一条要回一次确认才会给下一条，单次最多读 12 条。
+    设备逐条推送记录（最新的在前），收到一条要回一次确认才会给下一条，单次最多读 20 条。
+    设备时钟被重置过的旧记录会显示为「时间未知」。
   </p>
 </div>
 
@@ -325,9 +326,11 @@
       if (r.ts === 0xFFFFFFFF) {
         log("日志：没有更多记录");
       } else {
-        log("日志：" + fmtTime(r.ts) + " " + fmtDur(r.dur) +
+        log("日志：" + (r.ts > 1600000000 ? fmtTime(r.ts) : "时间未知") + " " + fmtDur(r.dur) +
             " 状态" + (r.st === 1 ? "结束" : "开始"));
-        if (r.dur > 0) $("lastLog").textContent = fmtTime(r.ts) + " · " + fmtDur(r.dur);
+        if (r.dur > 0 && r.ts > 1600000000) {
+          $("lastLog").textContent = fmtTime(r.ts) + " · " + fmtDur(r.dur);
+        }
       }
       if (logWaiter) { const w = logWaiter; logWaiter = null; w(r); }
       return;
@@ -513,7 +516,9 @@
       const n = document.createElement("span");
       n.className = "no"; n.textContent = String(i + 1);
       const t = document.createElement("span");
-      t.style.flex = "1"; t.textContent = fmtTime(r.ts);
+      t.style.flex = "1";
+      // 设备时钟被重置过的历史记录，时间戳会接近 0，显示为未知
+      t.textContent = r.ts > 1600000000 ? fmtTime(r.ts) : "时间未知";
       const u = document.createElement("span");
       u.style.cssText = "color:var(--sub);font-size:13px";
       u.textContent = fmtDur(r.dur);
@@ -531,11 +536,12 @@
     renderLogs();
     log("开始读取消杀记录…");
     await send(FRAME_LOG, "查询日志");
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 20; i++) {
       const r = await waitForLog(2500);
       if (!r) { log("日志读取超时，可能已读完"); break; }
       if (r.ts === 0xFFFFFFFF) { log("设备回复没有更多记录"); break; }
-      if (r.ts > 1600000000 && !logs.some(x => x.tsHex === r.tsHex)) logs.push(r);
+      // 时间戳无效的记录也要保留并确认，否则会卡住后面的记录
+      if (!logs.some(x => x.tsHex === r.tsHex)) logs.push(r);
       await send(frameLogAck(r.tsHex), "确认日志");
     }
     renderLogs();
