@@ -9,7 +9,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 广播名 | `QUANGE-WY020702` |
+| 广播名 | `QUANGE-WY020702` **或** `kHID` —— 实测会在两者之间切换 |
 | GAP 设备名 | `Hi-YM01-XXXXXXXXXXXX` |
 | 广播内容 | Service UUID `0x1812`(HID) + `0x180F`(Battery)，Manufacturer Data 前三字节等于 MAC 前缀 |
 | 芯片 | Telink（泰凌微），PnP ID `0x248A:0x6682` |

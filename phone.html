@@ -92,6 +92,10 @@
       找不到？显示全部蓝牙设备
     </button>
   </div>
+  <p class="hint" style="margin:10px 0 0">
+    设备的广播名会在 <b>QUANGE-WY020702</b> 和 <b>kHID</b> 之间切换，两个名字都要留意。
+    如果列表是空的，多半是它正好在用另一个名字广播，多等几秒再点一次。
+  </p>
 </div>
 
 <!-- 状态 -->
@@ -247,7 +251,7 @@
       const opts = showAll
         ? { acceptAllDevices: true, optionalServices: [SERVICE] }
         : { filters: [{ namePrefix: "QUANGE" }, { namePrefix: "Hi-YM01" },
-                      { namePrefix: "WY" }],
+                      { namePrefix: "kHID" }, { namePrefix: "WY" }],
             optionalServices: [SERVICE] };
 
       device = await navigator.bluetooth.requestDevice(opts);
@@ -260,6 +264,21 @@
       log("正在连接 " + (device.name || device.id) + " …");
       server = await device.gatt.connect();
       $("devName").textContent = device.name || device.id;
+
+      // 广播名可能是 QUANGE-WY020702，也可能是 kHID（实测会在两者间切换）
+      // GAP 服务里的 Device Name 才是稳定的真实名字
+      try {
+        const gap = await server.getPrimaryService("generic_access");
+        const dn = await gap.getCharacteristic("device_name");
+        const raw = await dn.readValue();
+        const real = new TextDecoder().decode(raw).replace(/\0+$/, "");
+        if (real) {
+          $("devName").textContent = real;
+          log("GAP 设备名：" + real);
+        }
+      } catch (e) {
+        log("读 GAP 设备名失败（不影响使用）");
+      }
 
       const svc = await server.getPrimaryService(SERVICE);
       chWrite = await svc.getCharacteristic(CH_WRITE);
