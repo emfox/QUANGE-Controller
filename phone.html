@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#f7f7f9">
-<title>全格杀菌杯架</title>
+<meta name="theme-color" content="#f5f5f7">
+<title>智能杀菌杯架 · 蓝牙控制</title>
 <style>
   :root{
     --bg:#f5f5f7; --card:#ffffff; --text:#1d1d1f; --sub:#86868b;
@@ -31,7 +31,8 @@
        padding:8px 0;border-bottom:1px solid var(--line)}
   .row:last-child{border-bottom:none;padding-bottom:0}
   .row .k{color:var(--sub);font-size:14px;flex:0 0 auto}
-  .row .v{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+  .row .v{font-weight:500;text-align:right;font-variant-numeric:tabular-nums;
+          word-break:break-all}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--sub);
        margin-right:6px;vertical-align:1px}
   .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(52,199,89,.18)}
@@ -50,8 +51,6 @@
     font:inherit;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
     background:var(--bg);color:var(--text);width:100%;
   }
-  .field{display:flex;gap:10px;align-items:center;margin-bottom:12px}
-  .field label{flex:0 0 72px;color:var(--sub);font-size:14px}
   .big{font-size:28px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
   #log{
     font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sub);
@@ -61,18 +60,27 @@
   .banner{font-size:13px;padding:12px 14px;border-radius:12px;margin-bottom:14px;
           background:rgba(255,149,0,.12);color:var(--warn);display:none}
   .banner.show{display:block}
+  .item{display:flex;gap:8px;align-items:center;padding:8px 0;
+        border-bottom:1px solid var(--line)}
+  .item:last-of-type{border-bottom:none}
+  .item .no{flex:0 0 20px;color:var(--sub);font-size:13px;font-variant-numeric:tabular-nums}
+  .item input[type=time]{flex:1 1 auto;min-width:0}
+  .item select{flex:0 0 96px}
+  .item .del{flex:0 0 36px;width:36px;height:36px;padding:0;border-radius:10px;
+             background:transparent;border:1px solid var(--line);color:var(--err);
+             font-size:15px;line-height:1}
+  .empty{color:var(--sub);font-size:14px;text-align:center;padding:16px 0}
 </style>
 </head>
 <body>
 
-<h1>全格杀菌杯架</h1>
-<p class="hint">WY020702 · 蓝牙直连 · 无需绑定</p>
+<h1>智能杀菌杯架</h1>
+<p class="hint">蓝牙直连 · 无需绑定 · 无需安装</p>
 
 <div class="banner" id="unsupported">
   当前浏览器不支持 Web Bluetooth。请用 <b>Android 版 Chrome</b> 打开本页（iOS 不支持）。
 </div>
 
-<!-- 连接 -->
 <div class="card">
   <h2>连接</h2>
   <div class="row">
@@ -93,45 +101,38 @@
     </button>
   </div>
   <p class="hint" style="margin:10px 0 0">
-    设备的广播名会在 <b>QUANGE-WY020702</b> 和 <b>kHID</b> 之间切换，两个名字都要留意。
-    如果列表是空的，多半是它正好在用另一个名字广播，多等几秒再点一次。
+    设备开机后的广播名可能是品牌名，也可能是模块默认名 <b>kHID</b> —— 两个都认。
+    列表为空时多等几秒再点一次。
   </p>
 </div>
 
-<!-- 状态 -->
 <div class="card">
   <h2>当前状态</h2>
   <div class="big" id="stateMain" style="margin-bottom:12px">—</div>
-  <div class="row"><span class="k">下次杀菌</span><span class="v" id="nextTime">—</span></div>
+  <div class="row"><span class="k">下次消杀</span><span class="v" id="nextTime">—</span></div>
   <div class="row"><span class="k">电量</span><span class="v" id="battery">—</span></div>
+  <div class="row"><span class="k">固件版本</span><span class="v" id="fwVer">—</span></div>
   <div class="btnrow">
     <button id="btnRefresh" class="ghost">刷新状态</button>
   </div>
 </div>
 
-<!-- 设定时 -->
 <div class="card">
-  <h2>设定时</h2>
-  <div class="field">
-    <label>时间</label>
-    <input type="time" id="at" value="03:00">
+  <h2>定时</h2>
+  <div id="items"><div class="empty">未连接</div></div>
+  <div class="btnrow">
+    <button id="btnAdd" class="ghost">+ 添加一条</button>
+    <button id="btnRead" class="ghost">从设备读取</button>
   </div>
-  <div class="field">
-    <label>时长</label>
-    <select id="dur">
-      <option value="3">3 分钟</option>
-      <option value="4">4 分钟</option>
-      <option value="5" selected>5 分钟</option>
-      <option value="6">6 分钟</option>
-    </select>
+  <div class="btnrow">
+    <button id="btnSave">保存到设备</button>
   </div>
-  <button id="btnSave">保存（覆盖原定时）</button>
   <p class="hint" style="margin:12px 0 0">
-    每次只写一条定时，原有列表会被整表覆盖。时长可选 3~6 分钟。
+    最多 4 条，每条 3~6 分钟。保存时整表覆盖，设备上原有定时会被替换。
+    多条之间的间隔需大于 1 小时（沿用原厂限制）。
   </p>
 </div>
 
-<!-- 手动 -->
 <div class="card">
   <h2>手动</h2>
   <div class="btnrow" style="margin-top:0">
@@ -140,7 +141,6 @@
   </div>
 </div>
 
-<!-- 日志 -->
 <div class="card">
   <h2>日志</h2>
   <div id="log"></div>
@@ -150,66 +150,89 @@
 (() => {
   "use strict";
 
-  const SERVICE = "000000fb-0000-1000-8000-00805f9b34fb";
-  const CH_WRITE = "00001001-0000-1000-8000-00805f9b34fb";
+  const SERVICE   = "000000fb-0000-1000-8000-00805f9b34fb";
+  const CH_WRITE  = "00001001-0000-1000-8000-00805f9b34fb";
   const CH_NOTIFY = "00001002-0000-1000-8000-00805f9b34fb";
+  const MAX_ITEMS = 4;
+
+  // 只按前缀匹配，不绑定具体型号（不同批次后缀不同）
+  const NAME_FILTERS = [
+    { namePrefix: "QUANGE" },
+    { namePrefix: "Hi-" },
+    { namePrefix: "kHID" }
+  ];
 
   const $ = id => document.getElementById(id);
   let device = null, server = null, chWrite = null, chNotify = null;
-  let lastNotify = null;
+  let items = [];
+  let pendingList = false;
 
-  // ---------- UI helpers ----------
-  function log(msg) {
-    const el = $("log");
-    const t = new Date().toTimeString().slice(0, 8);
-    el.textContent += `[${t}] ${msg}\n`;
-    el.scrollTop = el.scrollHeight;
-  }
   const hex = arr => Array.from(new Uint8Array(arr))
       .map(b => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+  const pad2 = n => String(n).padStart(2, "0");
+
+  function log(msg) {
+    const el = $("log");
+    el.textContent += `[${new Date().toTimeString().slice(0, 8)}] ${msg}\n`;
+    el.scrollTop = el.scrollHeight;
+  }
 
   function setConnected(on) {
     $("dot").className = "dot" + (on ? " on" : "");
     $("connText").textContent = on ? "已连接" : "未连接";
     $("btnConnect").disabled = on;
     $("btnDisconnect").disabled = !on;
-    ["btnRefresh", "btnSave", "btnStart", "btnStop"].forEach(id => $(id).disabled = !on);
+    ["btnRefresh", "btnSave", "btnStart", "btnStop", "btnRead", "btnAdd"]
+      .forEach(id => $(id).disabled = !on);
+    if (!on) $("devName").textContent = "—";
+    $("btnAdd").disabled = !on || items.length >= MAX_ITEMS;
   }
 
-  // ---------- 帧构造 ----------
-  function frameSetTimer(hh, mm, dur) {
-    // DB 08 08 01 HH MM 0D
-    return new Uint8Array([
-      0xDB, 0x08, 0x08, 0x01, hh, mm, 0x00 | dur
-    ]);
-  }
+  // ---------- 帧 ----------
   function frameQuery() {
     const ts = Math.floor(Date.now() / 1000);
-    return new Uint8Array([
-      0xDB, 0x04, 0x02,
-      (ts >>> 24) & 0xFF, (ts >>> 16) & 0xFF, (ts >>> 8) & 0xFF, ts & 0xFF
-    ]);
+    return new Uint8Array([0xDB, 0x04, 0x02,
+      (ts >>> 24) & 0xFF, (ts >>> 16) & 0xFF, (ts >>> 8) & 0xFF, ts & 0xFF]);
   }
+  function frameSetList(list) {
+    const b = [0xDB, 0x08, 0x08, list.length];
+    for (const it of list) b.push(it.h & 0xFF, it.m & 0xFF, it.d & 0xFF);
+    return new Uint8Array(b);
+  }
+  const FRAME_LOG   = new Uint8Array([0xDB, 0x01, 0x05]);
+  const FRAME_LIST  = new Uint8Array([0xDB, 0x01, 0x07]);
   const FRAME_START = new Uint8Array([0xDB, 0x02, 0x04, 0x01]);
   const FRAME_STOP  = new Uint8Array([0xDB, 0x02, 0x04, 0x00]);
 
-  // ---------- 回包解析 ----------
+  // ---------- 回包 ----------
+  function parseList(s) {
+    const body = s.slice(6);
+    const out = [];
+    for (let i = 0; i + 6 <= body.length; i += 6) {
+      const c = body.slice(i, i + 6);
+      const h = parseInt(c.slice(0, 2), 16);
+      const m = parseInt(c.slice(2, 4), 16);
+      const d = parseInt(c.slice(4, 6), 16);
+      if (h === 0xFF || m === 0xFF) continue;
+      if (!(h >= 0 && h < 24 && m >= 0 && m < 60 && d >= 1 && d <= 6)) continue;
+      out.push({ h: h, m: m, d: d });
+    }
+    return out;
+  }
+
   function onNotify(event) {
     const v = event.target.value;
     const s = Array.from(new Uint8Array(v.buffer || v))
       .map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-    lastNotify = s;
     log("回包 " + s);
 
     const pre = s.slice(0, 6);
-    const st = s.slice(6, 8);
+    const cmd = s.slice(6, 8);
 
-    // 状态类：BD0B02 / BD0E02 / BD1102 / BD0002 / BD0202
-    if (["BD0B02", "BD0E02", "BD1102", "BD0002", "BD0202"].includes(pre)) {
+    if (["BD0B02", "BD0E02", "BD1102", "BD0002", "BD0202"].indexOf(pre) >= 0) {
       const bat = parseInt(s.slice(16, 18), 16);
-      if (!isNaN(bat)) $("battery").textContent = bat + "%";
-
-      if (st === "01") {
+      if (!isNaN(bat) && bat >= 0 && bat <= 100) $("battery").textContent = bat + "%";
+      if (cmd === "01") {
         const a0 = parseInt(s.slice(8, 12), 16);
         const a1 = parseInt(s.slice(12, 16), 16);
         const left = Math.max(0, a0 - a1);
@@ -220,39 +243,119 @@
         $("stateMain").style.color = "";
         const nxt = parseInt(s.slice(18, 26), 16);
         if (nxt > 1600000000) {
-          const d = new Date(nxt * 1000);
-          const pad = n => String(n).padStart(2, "0");
+          const dt = new Date(nxt * 1000);
           $("nextTime").textContent =
-            `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            `${dt.getMonth() + 1}月${dt.getDate()}日 ${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
         } else {
           $("nextTime").textContent = "未设置";
         }
       }
       return;
     }
-    if (pre === "BD0D08") {
-      log("定时已保存 ✓");
+
+    if (pre === "BD0D07" || pre === "BD0D08") {
+      const list = parseList(s);
+      if (pre === "BD0D07") {
+        items = list;
+        renderItems();
+        pendingList = false;
+        log("读取到 " + list.length + " 条定时");
+      } else {
+        log("保存成功" + (list.length
+          ? "，设备现有：" + list.map(x => pad2(x.h) + ":" + pad2(x.m) + "/" + x.d + "分").join("、")
+          : "，设备定时为空"));
+      }
       return;
     }
-    if (pre === "BD0D07") {
-      log("当前定时列表：" + s.slice(6));
+
+    if (pre === "BD06A2") {
+      let str = "";
+      const body = s.slice(6);
+      for (let i = 0; i + 2 <= body.length; i += 2) {
+        const code = parseInt(body.slice(i, i + 2), 16);
+        if (code >= 32 && code < 127) str += String.fromCharCode(code);
+      }
+      if (str) $("fwVer").textContent = str;
       return;
     }
-    if (pre === "BD05A1") {
-      log("设备电量过低，请更换电池");
-      $("battery").textContent = "电量低";
+
+    if (pre === "BD0805" || pre === "BD0806") { log("（消杀日志包）"); return; }
+    if (pre === "BD05A1") { log("设备电量过低，请更换电池"); $("battery").textContent = "电量低"; }
+  }
+
+  // ---------- 定时列表 ----------
+  function renderItems() {
+    const box = $("items");
+    box.innerHTML = "";
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">设备上没有定时</div>';
     }
+    items.forEach((it, i) => {
+      const row = document.createElement("div");
+      row.className = "item";
+
+      const no = document.createElement("span");
+      no.className = "no";
+      no.textContent = String(i + 1);
+
+      const tin = document.createElement("input");
+      tin.type = "time";
+      tin.value = pad2(it.h) + ":" + pad2(it.m);
+      tin.onchange = e => {
+        const parts = e.target.value.split(":");
+        items[i].h = Number(parts[0]);
+        items[i].m = Number(parts[1]);
+        persist();
+      };
+
+      const sel = document.createElement("select");
+      [3, 4, 5, 6].forEach(d => {
+        const o = document.createElement("option");
+        o.value = String(d);
+        o.textContent = d + " 分钟";
+        if (d === it.d) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = e => { items[i].d = Number(e.target.value); persist(); };
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "✕";
+      del.onclick = () => { items.splice(i, 1); renderItems(); };
+
+      row.appendChild(no);
+      row.appendChild(tin);
+      row.appendChild(sel);
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+    $("btnAdd").disabled = !(device && device.gatt && device.gatt.connected) ||
+                          items.length >= MAX_ITEMS;
+    persist();
+  }
+
+  function persist() {
+    try { localStorage.setItem("quange_items", JSON.stringify(items)); } catch (_) {}
+  }
+
+  function validate(list) {
+    if (!list.length) return "至少需要一条定时";
+    if (list.length === 1) return null;
+    const mins = list.map(x => x.h * 60 + x.m).sort((a, b) => a - b);
+    for (let i = 0; i < mins.length; i++) {
+      const next = (i + 1 < mins.length) ? mins[i + 1] : mins[0] + 1440;
+      if (next - mins[i] <= 60) return "两条定时的间隔需要大于 1 小时（原厂限制）";
+    }
+    return null;
   }
 
   // ---------- 连接 ----------
   async function connect(showAll) {
     try {
-      log(showAll ? "扫描全部蓝牙设备…" : "扫描 QUANGE 设备…");
+      log(showAll ? "扫描全部蓝牙设备…" : "按名称前缀扫描…");
       const opts = showAll
         ? { acceptAllDevices: true, optionalServices: [SERVICE] }
-        : { filters: [{ namePrefix: "QUANGE" }, { namePrefix: "Hi-YM01" },
-                      { namePrefix: "kHID" }, { namePrefix: "WY" }],
-            optionalServices: [SERVICE] };
+        : { filters: NAME_FILTERS, optionalServices: [SERVICE] };
 
       device = await navigator.bluetooth.requestDevice(opts);
       device.addEventListener("gattserverdisconnected", () => {
@@ -265,37 +368,29 @@
       server = await device.gatt.connect();
       $("devName").textContent = device.name || device.id;
 
-      // 广播名可能是 QUANGE-WY020702，也可能是 kHID（实测会在两者间切换）
-      // GAP 服务里的 Device Name 才是稳定的真实名字
       try {
         const gap = await server.getPrimaryService("generic_access");
         const dn = await gap.getCharacteristic("device_name");
         const raw = await dn.readValue();
         const real = new TextDecoder().decode(raw).replace(/\0+$/, "");
-        if (real) {
-          $("devName").textContent = real;
-          log("GAP 设备名：" + real);
-        }
-      } catch (e) {
-        log("读 GAP 设备名失败（不影响使用）");
-      }
+        if (real) { $("devName").textContent = real; log("GAP 设备名：" + real); }
+      } catch (e) { log("读 GAP 设备名失败（不影响使用）"); }
 
       const svc = await server.getPrimaryService(SERVICE);
       chWrite = await svc.getCharacteristic(CH_WRITE);
-
       try {
         chNotify = await svc.getCharacteristic(CH_NOTIFY);
         await chNotify.startNotifications();
         chNotify.addEventListener("characteristicvaluechanged", onNotify);
-        log("已订阅状态上报（1002）");
+        log("已订阅状态上报");
       } catch (e) {
-        log("订阅通知失败：" + e.message + "（仍可写入）");
+        log("订阅状态上报失败：" + e.message);
       }
 
       setConnected(true);
       log("连接成功");
       await new Promise(r => setTimeout(r, 300));
-      await query();
+      await refreshAll();
     } catch (e) {
       log("连接失败：" + (e.message || e));
       setConnected(false);
@@ -312,59 +407,82 @@
 
   // ---------- 指令 ----------
   async function send(frame, label) {
-    if (!chWrite) { log("尚未连接"); return; }
+    if (!chWrite) { log("尚未连接"); return false; }
     try {
       await chWrite.writeValueWithoutResponse(frame);
-      log(`发送 ${label}：${hex(frame)}`);
+      log("发送 " + label + "：" + hex(frame));
+      return true;
     } catch (e) {
-      // 有些浏览器不实现 withResponse 才会报错，退一步再试
       try {
         await chWrite.writeValue(frame);
-        log(`发送 ${label}（带应答）：${hex(frame)}`);
+        log("发送 " + label + "（带应答）：" + hex(frame));
+        return true;
       } catch (e2) {
         log("发送失败：" + (e2.message || e2));
+        return false;
       }
     }
   }
 
-  async function query() {
+  async function refreshStatus() {
     await send(frameQuery(), "查询状态");
     await new Promise(r => setTimeout(r, 900));
   }
 
-  async function saveTimer() {
-    const v = $("at").value || "03:00";
-    const [hh, mm] = v.split(":").map(Number);
-    const dur = Number($("dur").value);
-    if (isNaN(hh) || isNaN(mm)) { log("时间格式不对"); return; }
-    localStorage.setItem("quange_at", v);
-    localStorage.setItem("quange_dur", String(dur));
-    await send(frameSetTimer(hh, mm, dur), `设定时 ${v}/${dur}分钟`);
-    await new Promise(r => setTimeout(r, 800));
-    await query();
+  // 设备只在完整时序下回列表：对时 → 日志 → 列表（照抄原小程序）
+  async function readList() {
+    pendingList = true;
+    await send(frameQuery(), "对时");
+    await new Promise(r => setTimeout(r, 700));
+    await send(FRAME_LOG, "日志查询");
+    await new Promise(r => setTimeout(r, 700));
+    await send(FRAME_LIST, "查询定时列表");
+    await new Promise(r => setTimeout(r, 1600));
+    if (pendingList) log("没收到列表回包，可再点一次「从设备读取」");
+    pendingList = false;
   }
 
-  // ---------- 绑定事件 ----------
+  async function refreshAll() {
+    await refreshStatus();
+    await readList();
+  }
+
+  async function saveList() {
+    const err = validate(items);
+    if (err) { log("无法保存：" + err); alert(err); return; }
+    await send(frameSetList(items), "保存 " + items.length + " 条定时");
+    await new Promise(r => setTimeout(r, 1200));
+    await readList();
+  }
+
   function init() {
     if (!navigator.bluetooth) {
       $("unsupported").classList.add("show");
       $("btnConnect").disabled = true;
       $("btnAll").disabled = true;
     }
-    const sa = localStorage.getItem("quange_at");
-    const sd = localStorage.getItem("quange_dur");
-    if (sa) $("at").value = sa;
-    if (sd) $("dur").value = sd;
-
+    try {
+      const saved = JSON.parse(localStorage.getItem("quange_items") || "[]");
+      if (Array.isArray(saved) && saved.length) items = saved;
+    } catch (_) {}
+    renderItems();
     setConnected(false);
+
     $("btnConnect").onclick = () => connect(false);
     $("btnAll").onclick = () => connect(true);
     $("btnDisconnect").onclick = disconnect;
-    $("btnRefresh").onclick = query;
-    $("btnSave").onclick = saveTimer;
-    $("btnStart").onclick = async () => { await send(FRAME_START, "立即消杀"); };
-    $("btnStop").onclick = async () => { await send(FRAME_STOP, "关闭"); };
-    log("准备就绪。请先长按杯架按键 3 秒开机，再点「连接设备」。");
+    $("btnRefresh").onclick = refreshAll;
+    $("btnRead").onclick = readList;
+    $("btnSave").onclick = saveList;
+    $("btnAdd").onclick = () => {
+      if (items.length >= MAX_ITEMS) return;
+      items.push({ h: 3, m: 0, d: 5 });
+      renderItems();
+    };
+    $("btnStart").onclick = () => send(FRAME_START, "立即消杀");
+    $("btnStop").onclick = () => send(FRAME_STOP, "关闭");
+
+    log("准备就绪。先长按设备按键 3 秒开机，再点「连接设备」。");
   }
 
   document.addEventListener("DOMContentLoaded", init);
