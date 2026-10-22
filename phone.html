@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f7">
-<title>全格（QUANGE）智能杀菌杯架 · 蓝牙控制</title>
+<title>全格（QUANGE）智能杀菌牙刷杯架 · 蓝牙控制</title>
 <style>
   :root{
     --bg:#f5f5f7; --card:#ffffff; --text:#1d1d1f; --sub:#86868b;
@@ -74,7 +74,7 @@
 </head>
 <body>
 
-<h1>全格（QUANGE）智能杀菌杯架</h1>
+<h1>全格（QUANGE）智能杀菌牙刷杯架</h1>
 <p class="hint">蓝牙直连 · 无需绑定 · 无需安装</p>
 
 <div class="banner" id="unsupported">
@@ -130,7 +130,7 @@
   </div>
   <p class="hint" style="margin:12px 0 0">
     最多 4 条，每条 3~6 分钟。保存时整表覆盖，设备上原有定时会被替换。
-    多条之间的间隔需大于 1 小时（沿用原厂限制）。
+    多条之间的间隔需大于 1 小时，且都在首个定时之后 23 小时内（沿用原厂限制）。
   </p>
 </div>
 
@@ -393,14 +393,23 @@
     try { localStorage.setItem("quange_items", JSON.stringify(items)); } catch (_) {}
   }
 
+  // 与小程序 app-service.js @addtime 的校验保持一致：
+  // 原厂用的是「间隔 ±59 分钟」判定，也就是 >= 59 分钟就放行（不是严格 > 60）。
+  // 另外所有定时都要落在首个定时的 23 小时（1380 分钟）以内。
+  // 这些都是前端校验，固件是否也拦没有实测。
   function validate(list) {
     if (!list.length) return "至少需要一条定时";
+    if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（原厂约定）`;
     if (list.length === 1) return null;
+
     const mins = list.map(x => x.h * 60 + x.m).sort((a, b) => a - b);
     for (let i = 0; i < mins.length; i++) {
       const next = (i + 1 < mins.length) ? mins[i + 1] : mins[0] + 1440;
-      if (next - mins[i] <= 60) return "两条定时的间隔需要大于 1 小时（原厂限制）";
+      if (next - mins[i] < 59) return "两条定时的间隔不能小于 1 小时（原厂限制）";
     }
+    // 跨天情形下首个定时到最后一个定时的跨度
+    const span = mins[mins.length - 1] - mins[0];
+    if (span > 1380) return "所有定时需分布在首个定时之后的 23 小时内（原厂限制）";
     return null;
   }
 

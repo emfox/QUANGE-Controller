@@ -58,15 +58,27 @@ C:\Users\<user>\AppData\Roaming\Tencent\xwechat\radium\users\<hash>\
 判定依据：直接看信息熵。未解密时约 **6.64**（AES 密文会接近 8.0），
 且存在大量可打印字符的重复模式 —— 典型的重复密钥 XOR。
 
-解密后结构（与老 wxapkg 类似，但没有魔数头，索引位置需要自己找）：
+解密后结构（与老 wxapkg 类似，但**没有 `0xBE` 魔数头，也没有可信的 indexInfoLength**，
+所以索引区位置只能靠扫描定位）：
 
 ```
-索引区（本例起于偏移 1047）：
-    [4B 名称长度][路径 UTF-8][4B 偏移][4B 大小]  × 文件数
-数据区：紧跟在索引之后
+解码后缓冲区（本例 407840 字节 = 原 407846 − 6）：
+
+    偏移 0 .. 1046      其他内容（约 1KB，不是索引）
+    偏移 1047 .. 1758    索引区：
+                          [4B 名称长度][路径 UTF-8][4B 偏移][4B 大小] × 19
+    偏移 1759 .. …      其他块（本例紧跟一段以 PNG 魔数 89 50 4E 47 开头的数据）
+    偏移 90088 ..        各文件的实际内容（含 /app-service.js）
 ```
 
 **关键差异：偏移是相对整个缓冲区的绝对值**，不是相对数据区起点。
+所以取文件时直接 `buf[offset : offset+size]`，不要去加减任何基址。
+
+实测校验：19 项的偏移首尾相接（`90088+147606 = 237694` → … → 最后一项结束于 407839），
+且 `buf[90088:90088+147606]` 与仓库里的 `miniprogram/app-service.js` **逐字节一致**。
+
+> 索引区起点 1047 只对这一个包成立。`tools/wxapkg_unpack.py` 的做法是
+> 扫描整个缓冲区、找最长的连续索引项序列，因此换版本也能解。
 
 ### 本题包的文件清单（19 项）
 
@@ -95,11 +107,24 @@ C:\Users\<user>\AppData\Roaming\Tencent\xwechat\radium\users\<hash>\
 ### 解包
 
 仓库里的 `tools/wxapkg_unpack.py` 能处理老格式（`0xBE`）、PC 加密格式
-（`--appid`）以及本文的 `V1MMWX` 结构，并支持按关键字检索：
+（`--appid`）以及本文的 `V1MMWX` 结构，纯本地、无第三方依赖，并支持按关键字检索：
 
 ```bash
-python tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --grep 2b12 DB0402
+# 自检（造假包再解回来，验证三种格式的解析都正确）
+python3 tools/wxapkg_unpack.py --selftest
+
+# 列出仓库自带的小程序包里的 19 个文件
+python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --list
+
+# 解包并搜索关键字（会输出到 tools/unpacked/）
+python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --grep 2b12 DB0402
+
+# 万一定位不到索引区，直接把解码后的整段缓冲当一个大文件搜
+python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --raw --grep DB0808
 ```
+
+实测：仓库自带的包（407,846 字节）会被识别为 `V1MMWX`，0.2 秒内解出 19 个文件，
+其中 `app-service.js` 与 `miniprogram/app-service.js` 逐字节一致。
 
 ---
 

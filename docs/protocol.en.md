@@ -129,11 +129,25 @@ The vendor UI allows at most 4, so design for 4.
 ### 3.4 Delete entries
 
 ```
-DB 00 08 | 0N (entry count) | [entries to KEEP] × N
+DB 00 08 | remaining count (1 byte) | [entries to KEEP] × remaining count
 ```
 
-The mini program builds `"DB00080" + remainingCount + remainingEntries`, i.e. the fourth byte is
-`0x0N`. Include only the entries you want to keep.
+The mini program builds `"DB00080" + remainingCount + remainingEntries`. Note `"DB00080"` is
+**7 characters** — its trailing `0` merges with the count into a single byte, so on the wire it
+looks like:
+
+| Remaining | Actual frame | Note |
+| --- | --- | --- |
+| 1 | `DB 00 08 01 03 00 05` | byte 4 = `01` |
+| 2 | `DB 00 08 02 03 00 05 0F 1E 04` | byte 4 = `02` |
+| 0 | `DB 00 08 00` | clears the whole table |
+
+**Byte 4 is the number of entries to keep** (same semantics as `DB 08 08 | count` on write).
+Include only the entries you want to keep, never the ones you want to delete.
+
+> In the source this number is `listLen`, set from `t.len - 1` (the existing total minus one), so
+> after splicing one entry out it equals exactly "remaining count".
+> Because the maximum is only 4, `0N` looks like BCD, but it is a plain hexadecimal integer.
 
 ---
 
@@ -149,20 +163,43 @@ BD 0D 08 | 03 00 05 | FF FF FF FF FF FF FF FF FF | 0C
                         └── three empty slots (9 bytes)
 ```
 
-**Two** entries were written and read back successfully; design for the vendor UI's limit of
-**4**. Whether the firmware accepts more is unverified.
+**Two** entries were written and read back successfully.
+
+**About the "4 entries" limit**: it comes from the FAQ text on the mini program's `problem`
+page ("…at most four, at least one"), and **is not hard-coded anywhere in the code** — so it is
+a vendor product convention, not necessarily a firmware limit. Designing for 4 is safest, but
+nothing in the code will stop you from trying a fifth.
 
 ---
 
 ## 5. Reply parsing
 
 All replies start with `BD`. **The command word is not fixed** — observed values include
-`BD0B02`, `BD0D08`, `BD0E02`. Judge state-class replies by "starts with `BD` and byte 4 is
-`0x00`/`0x01`" rather than matching one exact prefix.
+`BD0B02`, `BD0D08`, `BD0E02`.
 
-### 5.1 State class
+How to classify: **take the first 6 hex characters (3 bytes) as the command word and match it
+exactly.** That is what the mini program does — `buf2hex(value).substring(0,6)` followed by a
+chain of `else if("bd0b02"==a)`. `phone.html` and `set_timer.py` use the same rule.
 
-Indices below are positions in the **hex string** (1 hex char = 4 bits).
+```
+prefix (hex 0..6)        Meaning
+BD 0B 02 / BD 0E 02 /
+BD 11 02 / BD 00 02 /
+BD 02 02                 State class (see 5.1)
+BD 0D 07                 Schedule read-back (see 5.2)
+BD 0D 08                 Schedule saved (see 5.2)
+BD 08 05 / BD 08 06      Usage log (see 5.3)
+BD 06 A2                 Firmware version
+BD 05 A1                 Low battery warning
+```
+
+> Do **not** use "is byte 4 `0x00`/`0x01`" to classify replies — byte 4 of `BD0B02` is `0x00`
+> while that of `BD0D07` is `0x07`, and the rule misfires. Just enumerate the command words.
+
+### 5.1 State class (`BD0B02` / `BD0E02` / `BD1102` / `BD0002` / `BD0202`)
+
+Indices below are positions in the **hex string** (1 hex char = 4 bits, 2 hex = 1 byte).
+All five command words share the same field layout.
 
 | hex index | len | Meaning |
 | --- | --- | --- |
@@ -171,11 +208,25 @@ Indices below are positions in the **hex string** (1 hex char = 4 bits).
 | `8..12` | 4 | Sterilization start timestamp (low 32-bit fragment) |
 | `12..16` | 4 | Current timestamp fragment |
 | `16..18` | 2 | Battery percent (hex, `64` = 100%) |
-| `18..26` | 8 | **Next run, unix timestamp** (valid while idle) |
+| `18..26` | 8 | **Next run, unix timestamp** (only present when idle) |
 
 While sterilizing, remaining seconds = `sub(8,12) - sub(12,16)`.
 
-Real sample (start):
+> **Why you cannot blindly read `18..26`:**
+>
+> Only the **idle** reply (state `00`) carries the `18..26` next-run timestamp. When the state
+> is `01` (sterilizing) that segment is absent, and reading `sub(18,26)` yields something like
+> `0005EEC0`, which converts to 1970.
+>
+> Correct approach: **check the `6..8` state byte first, then decide whether to read `18..26`** —
+> or validate the value (`> 1600000000`, i.e. after Sep 2020). Both `phone.html` and
+> `set_timer.py` do this.
+>
+> Note: the two samples below were transcribed from early notes and their byte grouping was
+> simplified in transcription. **Do not use them to infer frame length** — use the index table
+> above for field positions.
+
+Real sample (start, state `01`):
 
 ```
 BD 0B 02 | 01 | 00 B4 | 00 00 | 64 | 00 05 | EE C0 | 00
@@ -187,6 +238,7 @@ Real sample (idle, schedule set to 03:00):
 ```
 BD 0E 02 | 00 | 00 B4 | 00 00 | 64 | 6A DA 5D 30 | 6A D9 F8 82
            ↑idle                      ↑next run     ↑now
+                                       = 2026-10-23 03:00:00
 ```
 
 ### 5.2 Schedule list (`BD0D07` / `BD0D08`)
@@ -275,10 +327,27 @@ If the full state reply is not received within 15 s, the mini program disconnect
 Three steps are enough to change the schedule:
 
 ```python
-# 1. connect over BLE (filter by advertising name "QUANGE")
-# 2. write  DB 08 08 01 HH MM 0D  to 00001001-... (write-without-response)
+# 1. connect over BLE
+#    the advertising name may be QUANGE-WY020702, or switch to kHID (and there is a Hi- prefix)
+#    -- accept all three prefixes, or just connect by MAC. Do not hard-code "QUANGE" only.
+# 2. write  DB 08 08 <count> <HH> <MM> <0D>  to 00001001-... (write-without-response)
 # 3. write  DB 04 02 + unix_seconds to the same characteristic, subscribe to 1002 to confirm
 ```
+
+**Writing the schedule does not need `DB 01 05`** — that one is "query the log" and is unrelated
+to setting the schedule.
+
+To **read back** the current schedule, send three frames in order:
+
+```
+DB 04 02 + ts     time sync (sync first, otherwise device-side timestamps are unreliable)
+DB 01 05          query the log (optional; usually preceded by a sync)
+DB 01 07          read the schedule -> replies BD 0D 07
+```
+
+`DB 01 05` is a **stream**: the device pushes one record at a time, and you must reply
+`DB 06 06 01 + that record's start timestamp` before it releases the next one, until `FFFFFFFF`.
+**Send without acknowledging and you will only ever get the first record.**
 
 Note: Windows defaults to MTU 23 → a 20-byte write limit. The longest frame in this protocol is
 10 bytes, so no chunking is needed; slice by 20 bytes if you extend it.
@@ -306,13 +375,17 @@ Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no bind
 
 ## 9. Unverified
 
-- Whether "two schedules must be ≥ 1 hour apart" is enforced by firmware or only by the UI
+- Whether "two schedules must be ≥ 1 hour apart" is enforced by the firmware or only by the UI.
+  **The UI logic is now fully traced** (`app-service.js` @addtime): the comparison uses `±59`
+  rather than `±60`, so the actual pass condition is **spacing ≥ 59 minutes** (not strictly
+  > 60); there is also an extra `r - a[0].min <= 1380` (23 h) constraint, i.e. every entry must
+  fall within 23 hours of the first one. These are **all front-end checks**; whether the
+  firmware also rejects is untested.
 - **Whether the duration byte (`0D`) actually takes effect** — every historical log entry shows
   180 s, while the current schedule asks for 5 minutes; read the log again after the next
-  scheduled run to find out
+  scheduled run to find out. (The leading `0` in `0D` is hard-coded by the mini program — see
+  §3.3 — that part is settled. What is unconfirmed is whether the device honours the duration.)
 - Whether the schedule survives a battery swap (it should)
 - Depth limit of the log ring buffer
 - Whether "start" records exist at all (every record observed was `01` = end)
-- Whether the leading `0` in `0D` is a fixed prefix or a length/type marker
-- Full field layout of `BD0D07`
-- Maximum number of schedule entries
+- Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (observed `0C` and `00`)

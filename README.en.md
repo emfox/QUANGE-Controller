@@ -41,6 +41,16 @@ python tools/set_timer.py --at 03:00 --dur 5        # 03:00 daily, 5 minutes
 python tools/set_timer.py --at "07:00=4,22:00=5"    # twice a day
 python tools/set_timer.py --query                   # read state + next run
 python tools/set_timer.py --start                   # sterilize right now
+python tools/set_timer.py --list                    # read the schedule from the device
+python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not connect
+```
+
+Device names default to the `QUANGE` / `Hi-` / `kHID` prefixes (same as the web app). If the
+scan comes up empty, address it directly:
+
+```bash
+python tools/set_timer.py -a AA:BB:CC:DD:EE:FF --query
+python tools/set_timer.py -n kHID --query            # match one prefix only
 ```
 
 ---
@@ -57,11 +67,11 @@ frames start with `DB`. The device replies on `00001002-...` with frames startin
 | Stop | `DB 02 04 00` |
 | Query state | `DB 04 02` + 4-byte big-endian unix seconds |
 | Query schedule | `DB 01 07` (not answered unless `DB 04 02` + `DB 01 05` precede it) |
-| **Set schedule (whole-list replace)** | `DB 08 08 <count>` + `[HH MM 0D] × count` |
-| Delete | `DB 00 08 <count>` + `[HH MM 0D] × count` |
+| **Set schedule (whole-list replace)** | `DB 08 08 <total count>` + `[HH MM 0D] × total count` |
+| Delete | `DB 00 08 <remaining count>` + `[entries to KEEP] × remaining count` |
 
 Each schedule entry is 3 bytes: `HH` hour (hex), `MM` minute (hex), `0D` duration
-(3/4/5/6 minutes).
+(3/4/5/6 minutes — the leading `0` is a fixed prefix, the second digit is the duration).
 
 Example — every day at 03:00 for 5 minutes → `DB 08 08 01 03 00 05`
 
@@ -97,7 +107,7 @@ Full field descriptions, reply parsing and the init sequence:
 | Item | Value |
 | --- | --- |
 | Model | WY020702 |
-| Advertising name | `QUANGE-WY020702` |
+| Advertising name | `QUANGE-WY020702` **or** `kHID` (it alternates) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | SoC | Telink, PnP ID `0x248A:0x6682` |
 | Power | 3 × AA cells, BLE only, no Wi-Fi |
@@ -132,16 +142,19 @@ In short: **the bundle must be decrypted; the protocol does not.**
 
 ## Known limitations
 
-- **The advertising name alternates**: observed flipping between `QUANGE-WY020702` and `kHID`.
-  Name-based scanning must accept both (the web app already does);
+- **The advertising name alternates**: observed flipping between `QUANGE-WY020702` and `kHID`,
+  while the GAP name is `Hi-YM01-…`. Both the web app and the script therefore match the
+  **`QUANGE` / `Hi-` / `kHID` prefixes** — all three. If the scan still misses it, connect by MAC
+  (`-a <MAC>` in the script, *Show all devices* in the web app);
 - **The device stops advertising while connected**: a BLE peripheral halts advertising once a
   central connects, so **only one host can control it at a time**. While your phone is connected
   the PC cannot see it, and vice versa. Press *Disconnect* before switching controllers;
 - **The schedule is replaced, not appended**: saving writes your whole edited list over the
-  device's configuration. Up to 4 entries, 3–6 minutes each; to remove one, delete it in the
-  editor and save;
-- The mini program validated "two schedules must be more than one hour apart"; whether the
-  firmware enforces this is unverified;
+  device's configuration. Up to 4 entries (per the vendor FAQ, not hard-coded), 3–6 minutes each;
+  to remove one, delete it in the editor and save;
+- **Spacing constraint**: the vendor front end requires ≥ 59 minutes between entries and all
+  entries within 23 hours of the first. The web app and the script enforce the same rules (these
+  are front-end checks; whether the firmware also enforces is unverified);
 - Whether the schedule survives a battery swap is untested (it should — it appears to live in
   flash);
 - The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
