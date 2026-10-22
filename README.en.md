@@ -42,6 +42,7 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # twice a day
 python tools/set_timer.py --query                   # read state + next run
 python tools/set_timer.py --start                   # sterilize right now
 python tools/set_timer.py --list                    # read the schedule from the device
+python tools/set_timer.py --version                 # read the firmware version (read-only)
 python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not connect
 ```
 
@@ -157,6 +158,11 @@ In short: **the bundle must be decrypted; the protocol does not.**
   are front-end checks; whether the firmware also enforces is unverified);
 - Whether the schedule survives a battery swap is untested (it should — it appears to live in
   flash);
+- **Firmware update is no longer possible**: the mini program ships a complete OTA implementation
+  (Telink-style OTA with CRC16 chunking), but both the update check and the download go through
+  `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is
+  documented in [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.1, but with no firmware file
+  there is nothing to flash (a bad write bricks the unit, with no rollback);
 - The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
 
 ---

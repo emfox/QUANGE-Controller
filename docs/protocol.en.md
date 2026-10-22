@@ -71,7 +71,7 @@ DB | CMD | SUB | [LEN] | [DATA...]
 | Query usage log | `DB 01 05` | `BD 08 05` |
 | **Set schedule (whole-list replace)** | `DB 08 08` + `Count` + `[HH MM 0D] × Count` | `BD 0D 08` |
 | Delete entries | `DB 00 08` + `Count` + `[HH MM 0D] × Count` | — |
-| Version | `DB 01 A4` | `BD 06 A2` + ASCII version (observed `000014`) |
+| Version | `DB 01 A4` | `BD 06 A2` + version field (parsed as `14`, see note below) |
 | Device reset | `DB 01 A0` | — |
 | Log acknowledgement | `DB 06 06 01` + 4-byte timestamp | — |
 | OTA chunks | `01 FF` / `02 FF ...` | — |
@@ -189,7 +189,7 @@ BD 02 02                 State class (see 5.1)
 BD 0D 07                 Schedule read-back (see 5.2)
 BD 0D 08                 Schedule saved (see 5.2)
 BD 08 05 / BD 08 06      Usage log (see 5.3)
-BD 06 A2                 Firmware version
+BD 06 A2                 Firmware version (also triggers the OTA check; see mini program §5.1)
 BD 05 A1                 Low battery warning
 ```
 
@@ -365,7 +365,13 @@ Environment: Windows + Python `bleak`; ~30 cm away, RSSI −55 to −72 dBm.
 | Confirm state | `DB 04 02 + ts` | `BD0E02 00 ...` | Next run = 2026-10-23 03:00:00 |
 | **Multiple entries** | `DB 08 08 02 03 00 05 0F 1E 04` | `BD0D08 030005 0F1E04 FF×6 00` | Both accepted |
 | **Read back list** | `DB 04 02` → `DB 01 05` → `DB 01 07` | `BD0D07 030005 0F1E04 FF×6 00` | Same two entries, exact match |
-| Firmware version | `DB 01 A4` | `BD06A2` + `"000014"` | Firmware `000014` |
+| Firmware version | `DB 01 A4` | `BD06A2 ...` (sample was simplified; full layout unverified) | Parsed as `14` using the mini program's algorithm |
+
+> Note: the `BD 06 A2` version field layout is **not fully verified**. The mini program takes hex
+> `15..16` (high nibble of byte 2) and `17..18` (low nibble of byte 4) and concatenates them into a
+> decimal number, yielding `14` in practice. The old sample `BD06A2` + `"000014"` is only 6 bytes —
+> too short to reach index 17 — so **do not use it as a frame-length reference**. Dump the full
+> `DB 01 A4` reply to settle it. (Full OTA flow: [miniprogram.en.md](miniprogram.en.md) §5.1.)
 | Log query | `DB 04 02` → `DB 01 05` | `BD0805 6AD9F79A 00B4 01 01` | Parsed as "start ts / 180 s / type 1 / end" |
 | Log streaming ack | `DB 06 06 01` + start ts | one record per ack | **Verified**: 20 records, newest first, can keep going back |
 

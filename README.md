@@ -40,6 +40,7 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # 一天两次
 python tools/set_timer.py --query                   # 查状态与下次杀菌时间
 python tools/set_timer.py --start                   # 立即消杀一次
 python tools/set_timer.py --list                    # 读取设备上的定时列表
+python tools/set_timer.py --version                 # 读固件版本（只读）
 python tools/set_timer.py --at 03:00 --dry-run      # 只打印帧，不连接设备
 ```
 
@@ -146,6 +147,10 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 - **两条定时的间隔约束**：原厂前端要求间隔 ≥ 59 分钟，且都落在首个定时之后 23 小时内。
   网页版和脚本都按同一套规则校验（这是前端校验，固件是否也强制，未验证）；
 - 换电池后定时是否保留，未实测（推断在 Flash 中，应当保留）；
+- **固件升级已不可用**：小程序里的 OTA 实现完整（Telink 标准 OTA + CRC16 分包），
+  但检查更新和下载固件都要走 `api.sh-lifefun.cn`，该域名 DNS 还在、80/443 全部超时。
+  协议机制已整理在 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.1，
+  但没有固件文件就无法刷机（写坏即变砖，无回滚）；
 - 设备广播非常稀疏，连接困难时请把设备靠近、并重新开关机一次。
 
 ---

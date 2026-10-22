@@ -24,6 +24,9 @@ set_timer.py —— 直接给全格智能杀菌牙刷杯架（WY020702）写定�
     # 读取消杀历史
     python3 set_timer.py --logs
 
+    # 读固件版本（DB 01 A4 -> BD 06 A2，只读，不会触发升级）
+    python3 set_timer.py --version
+
     # 只看将要发送的帧，不真发、不连设备
     python3 set_timer.py --at 03:00 --dur 5 --dry-run
 
@@ -193,6 +196,9 @@ async def run(a):
         todo = [(bytes.fromhex("DB020400"), "关闭")]
     elif a.query:
         todo = [(status_frame(), "查询状态")]
+    elif a.version:
+        # DB 01 A4 -> BD 06 A2，用来抓固件版本号；OTA 已随服务器下线，这里只读不写
+        todo = [(bytes.fromhex("DB01A4"), "读取固件版本")]
     elif a.list:
         todo = [(status_frame(), "对时"),
                 (bytes.fromhex("DB0105"), "日志查询"),
@@ -307,6 +313,15 @@ def _decode(b: bytes):
             log(f"    -> 定时列表（{len(items)} 条）：{pretty}")
         elif pre in ("BD0805", "BD0806"):
             log("    -> 消杀日志包")
+        elif pre == "BD06A2":
+            # 版本号解析照抄小程序：hex[15:16] + hex[17:18] 拼成十进制
+            # 注意回包若不足 9 字节则取不到，需先看原始 hex
+            if len(s) >= 18:
+                log(f"    -> 固件版本(按小程序算法): {int(s[15:16] + s[17:18], 16)}"
+                    f"  [原始 hex: {s}]")
+            else:
+                log(f"    -> 固件版本回包只有 {len(s)//2} 字节，不足以按下标解析"
+                    f"  [原始 hex: {s}]")
         elif pre == "BD05A1":
             log("    -> 低电量告警")
         else:
@@ -326,6 +341,8 @@ def cli():
     ap.add_argument("--start", action="store_true", help="立即开启消杀（验证通道）")
     ap.add_argument("--stop", action="store_true", help="关闭")
     ap.add_argument("--query", action="store_true", help="查询状态")
+    ap.add_argument("--version", action="store_true",
+                    help="读取固件版本（DB 01 A4 -> BD 06 A2）")
     ap.add_argument("--list", action="store_true", help="读取定时列表")
     ap.add_argument("--logs", action="store_true", help="读取消杀记录")
     ap.add_argument("--listen", type=float, default=6.0)
@@ -336,7 +353,8 @@ def cli():
 
     if args.at and "=" not in args.at:
         args.at = f"{args.at}={args.dur}"
-    if not (args.at or args.start or args.stop or args.query or args.list or args.logs):
+    if not (args.at or args.start or args.stop or args.query or args.version
+            or args.list or args.logs):
         ap.print_help()
         return 2
     try:
