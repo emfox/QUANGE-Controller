@@ -143,7 +143,8 @@ BD 0D 08 | 03 00 05 | FF FF FF FF FF FF FF FF FF | 0C
                         └── three empty slots (9 bytes)
 ```
 
-Maximum entry count is not verified; the mini program UI offers at most 4, so design for 4.
+**Two** entries were written and read back successfully; design for the vendor UI's limit of
+**4**. Whether the firmware accepts more is unverified.
 
 ---
 
