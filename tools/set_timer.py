@@ -49,6 +49,9 @@ def log(msg):
         _fh.flush()
 
 
+LOG_Q = None  # asyncio.Queue，存放收到的 BD0805/BD0806 原始字节
+
+
 # ---------------- 帧构造 ----------------
 
 def timer_frame(items):
@@ -88,6 +91,54 @@ def status_frame():
 
 # ---------------- 主流程 ----------------
 
+async def read_logs(client, target, wait=3.0, limit=12):
+    """读取消杀日志：设备逐条推送，每收到一条要回 DB060601+时间戳 才会给下一条"""
+    global LOG_Q
+
+    LOG_Q = asyncio.Queue()
+    while not LOG_Q.empty():
+        LOG_Q.get_nowait()
+
+    log("=== 读取消杀日志 ===")
+    await client.write_gatt_char(target, status_frame(), response=False)
+    log("[TX] 对时")
+    await asyncio.sleep(1.0)
+    await client.write_gatt_char(target, bytes.fromhex("DB0105"), response=False)
+    log("[TX] 查询日志")
+
+    rows = []
+    for i in range(limit):
+        try:
+            data = await asyncio.wait_for(LOG_Q.get(), timeout=wait)
+        except asyncio.TimeoutError:
+            log(f"    第 {i+1} 条等待超时，流结束")
+            break
+
+        s = bytes(data).hex().upper()
+        tsh = s[6:14]
+        if tsh == "FFFFFFFF":
+            log("    设备回复：没有更多记录")
+            break
+        dur = int(s[14:18], 16)
+        typ = int(s[18:20], 16)
+        st = int(s[20:22], 16)
+        tsv = int(tsh, 16)
+        when = datetime.fromtimestamp(tsv) if tsv > 1600000000 else None
+        rows.append((when, dur, typ, st))
+        when_s = f"{when:%Y-%m-%d %H:%M:%S}" if when else "时间未知（时钟被重置）"
+        log(f"    记录{i+1}: {when_s}  时长 {dur}s  "
+            f"类型 {typ}  {'结束' if st == 1 else '开始'}")
+
+        ack = bytes.fromhex("DB060601" + tsh)
+        await client.write_gatt_char(target, ack, response=False)
+        log(f"[TX] 确认 {tsh}")
+        await asyncio.sleep(0.4)
+
+    log(f"[*] 共读到 {len(rows)} 条记录")
+    LOG_Q = None
+    return rows
+
+
 async def run(a):
     os.makedirs(LOGDIR, exist_ok=True)
 
@@ -102,6 +153,8 @@ async def run(a):
         todo = [(status_frame(), "对时"),
                 (bytes.fromhex("DB0105"), "日志查询"),
                 (bytes.fromhex("DB0107"), "读取定时列表")]
+    elif a.logs:
+        todo = []
     else:
         items = parse_at(a.at)
         todo = [(timer_frame(items),
@@ -125,6 +178,9 @@ async def run(a):
         line = f"[回包] {bx.short_uuid(ch.uuid)} <- {bx.hexs(data)}"
         got.append((bx.short_uuid(ch.uuid), bytes(data)))
         log(line)
+        h = bytes(data).hex().upper()
+        if LOG_Q is not None and (h.startswith("BD0805") or h.startswith("BD0806")):
+            LOG_Q.put_nowait(bytes(data))
         _decode(bytes(data))
 
     client = await bx.connect(a.name, a.address, a.scan_time, a.connect_timeout,
@@ -144,6 +200,9 @@ async def run(a):
         if target is None:
             log(f"[x] 找不到 {CHAR}")
             return 2
+
+        if a.logs:
+            await read_logs(client, target, wait=3.0, limit=20)
 
         for frame, desc in todo:
             await client.write_gatt_char(target, frame, response=False)
@@ -221,6 +280,7 @@ def cli():
     ap.add_argument("--stop", action="store_true", help="关闭")
     ap.add_argument("--query", action="store_true", help="查询状态")
     ap.add_argument("--list", action="store_true", help="读取定时列表")
+    ap.add_argument("--logs", action="store_true", help="读取消杀记录")
     ap.add_argument("--listen", type=float, default=6.0)
     ap.add_argument("--scan-time", type=float, default=8.0)
     ap.add_argument("--connect-timeout", type=float, default=25.0)
@@ -229,7 +289,7 @@ def cli():
 
     if args.at and "=" not in args.at:
         args.at = f"{args.at}={args.dur}"
-    if not (args.at or args.start or args.stop or args.query or args.list):
+    if not (args.at or args.start or args.stop or args.query or args.list or args.logs):
         ap.print_help()
         return 2
     try:
