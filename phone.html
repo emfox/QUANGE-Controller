@@ -168,12 +168,13 @@
   const CH_NOTIFY = "00001002-0000-1000-8000-00805f9b34fb";
   const MAX_ITEMS = 4;
 
-  // 只按前缀匹配，不绑定具体型号（不同批次后缀不同）
+  // Match on prefixes only, never on an exact model (suffixes differ by batch)
   const NAME_FILTERS = [
     { namePrefix: "QUANGE" },
     { namePrefix: "Hi-" },
     { namePrefix: "kHID" },
-    // 广播里带 HID 服务是固件行为，比名字可靠 —— 原厂小程序就是按这个扫的
+    // Advertising the HID service is firmware behaviour and more reliable than the
+    // name - the vendor mini program scans by this service too
     { services: [0x1812] },
     { services: [0x180F] }
   ];
@@ -206,7 +207,7 @@
     $("btnAdd").disabled = !on || items.length >= MAX_ITEMS;
   }
 
-  // ---------- 帧 ----------
+  // ---------- Frames ----------
   function frameQuery() {
     const ts = Math.floor(Date.now() / 1000);
     return new Uint8Array([0xDB, 0x04, 0x02,
@@ -223,14 +224,14 @@
   const FRAME_START = new Uint8Array([0xDB, 0x02, 0x04, 0x01]);
   const FRAME_STOP  = new Uint8Array([0xDB, 0x02, 0x04, 0x00]);
 
-  // 日志确认帧：DB 06 06 01 + 4 字节开始时间戳
+  // Log ACK frame: DB 06 06 01 + 4-byte start timestamp
   function frameLogAck(tsHex) {
     const b = [0xDB, 0x06, 0x06, 0x01];
     for (let i = 0; i < 8; i += 2) b.push(parseInt(tsHex.slice(i, i + 2), 16));
     return new Uint8Array(b);
   }
 
-  // 日志包：BD0805/BD0806 | 开始时间戳(8) | 时长秒(4) | 类型(2) | 状态(2)
+  // Log record: BD0805/BD0806 | start timestamp (8) | duration in s (4) | type (2) | state (2)
   function parseLog(s) {
     return {
       tsHex: s.slice(6, 14),
@@ -249,7 +250,7 @@
     return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   };
 
-  // ---------- 回包 ----------
+  // ---------- Replies ----------
   function parseList(s) {
     const body = s.slice(6);
     const out = [];
@@ -341,7 +342,7 @@
     if (pre === "BD05A1") { log("设备电量过低，请更换电池"); $("battery").textContent = "电量低"; }
   }
 
-  // ---------- 定时列表 ----------
+  // ---------- Schedule list ----------
   function renderItems() {
     const box = $("items");
     box.innerHTML = "";
@@ -396,10 +397,10 @@
     try { localStorage.setItem("quange_items", JSON.stringify(items)); } catch (_) {}
   }
 
-  // 与小程序 app-service.js @addtime 的校验保持一致：
-  // 原厂用的是「间隔 ±59 分钟」判定，也就是 >= 59 分钟就放行（不是严格 > 60）。
-  // 另外所有定时都要落在首个定时的 23 小时（1380 分钟）以内。
-  // 这些都是前端校验，固件是否也拦没有实测。
+  // Mirrors the validation in the mini program's addtime page (app-service.js):
+  // The vendor checks a +/-59 minute gap, so 59 minutes or more passes (not a strict > 60).
+  // Every schedule must also fall within 23 hours (1380 minutes) of the first one.
+  // These are front-end checks; whether the firmware also enforces them is unmeasured.
   function validate(list) {
     if (!list.length) return "至少需要一条定时";
     if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（原厂约定）`;
@@ -410,13 +411,13 @@
       const next = (i + 1 < mins.length) ? mins[i + 1] : mins[0] + 1440;
       if (next - mins[i] < 59) return "两条定时的间隔不能小于 1 小时（原厂限制）";
     }
-    // 跨天情形下首个定时到最后一个定时的跨度
+    // Span from the first to the last schedule, allowing for crossing midnight
     const span = mins[mins.length - 1] - mins[0];
     if (span > 1380) return "所有定时需分布在首个定时之后的 23 小时内（原厂限制）";
     return null;
   }
 
-  // ---------- 连接 ----------
+  // ---------- Connection ----------
   async function connect(showAll) {
     try {
       log(showAll ? "扫描全部蓝牙设备…" : "按名称前缀扫描…");
@@ -472,7 +473,7 @@
     setConnected(false);
   }
 
-  // ---------- 指令 ----------
+  // ---------- Commands ----------
   async function send(frame, label) {
     if (!chWrite) { log("尚未连接"); return false; }
     try {
@@ -496,7 +497,8 @@
     await new Promise(r => setTimeout(r, 900));
   }
 
-  // 设备只在完整时序下回列表：对时 → 日志 → 列表（照抄原小程序）
+  // The device only returns the list after the full sequence:
+    // time sync -> log -> list (copied from the vendor mini program)
   async function readList() {
     pendingList = true;
     await send(frameQuery(), "对时");
@@ -529,7 +531,7 @@
       n.className = "no"; n.textContent = String(i + 1);
       const t = document.createElement("span");
       t.style.flex = "1";
-      // 设备时钟被重置过的历史记录，时间戳会接近 0，显示为未知
+      // Records from before a clock reset have timestamps near 0; show them as unknown
       t.textContent = r.ts > 1600000000 ? fmtTime(r.ts) : "时间未知";
       const u = document.createElement("span");
       u.style.cssText = "color:var(--sub);font-size:13px";
@@ -542,7 +544,8 @@
     });
   }
 
-  // 设备逐条推送，收到一条要回一次 DB060601+时间戳 才会给下一条
+  // The device pushes one record at a time and needs a DB060601 + timestamp ack
+    // before it sends the next
   async function fetchLogs() {
     logs = [];
     renderLogs();
@@ -552,7 +555,7 @@
       const r = await waitForLog(2500);
       if (!r) { log("日志读取超时，可能已读完"); break; }
       if (r.ts === 0xFFFFFFFF) { log("设备回复没有更多记录"); break; }
-      // 时间戳无效的记录也要保留并确认，否则会卡住后面的记录
+      // Keep and ack records with an invalid timestamp too, otherwise the stream stalls
       if (!logs.some(x => x.tsHex === r.tsHex)) logs.push(r);
       await send(frameLogAck(r.tsHex), "确认日志");
     }
