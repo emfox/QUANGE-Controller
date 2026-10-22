@@ -91,20 +91,25 @@ def status_frame():
 async def run(a):
     os.makedirs(LOGDIR, exist_ok=True)
 
-    # 先算帧
+    # 先算帧（list 需要照抄小程序的初始化时序，单独发 DB0107 设备不回）
     if a.start:
-        frame, desc = bytes.fromhex("DB020401"), "立即开启消杀"
+        todo = [(bytes.fromhex("DB020401"), "立即开启消杀")]
     elif a.stop:
-        frame, desc = bytes.fromhex("DB020400"), "关闭"
+        todo = [(bytes.fromhex("DB020400"), "关闭")]
     elif a.query:
-        frame, desc = status_frame(), "查询状态"
+        todo = [(status_frame(), "查询状态")]
+    elif a.list:
+        todo = [(status_frame(), "对时"),
+                (bytes.fromhex("DB0105"), "日志查询"),
+                (bytes.fromhex("DB0107"), "读取定时列表")]
     else:
         items = parse_at(a.at)
-        frame = timer_frame(items)
-        desc = "设定时 " + ", ".join(f"{h:02d}:{m:02d}/{d}分钟" for h, m, d in items)
+        todo = [(timer_frame(items),
+                 "设定时 " + ", ".join(f"{h:02d}:{m:02d}/{d}分钟" for h, m, d in items))]
 
-    log(f"=== {desc} ===")
-    log(f"    帧: {frame.hex(' ').upper()}  ({len(frame)} 字节)")
+    for f, d in todo:
+        log(f"=== {d} ===")
+        log(f"    帧: {f.hex(' ').upper()}  ({len(f)} 字节)")
 
     if a.dry_run:
         log("    (dry-run，未发送)")
@@ -140,9 +145,10 @@ async def run(a):
             log(f"[x] 找不到 {CHAR}")
             return 2
 
-        await asyncio.sleep(0.5)
-        await client.write_gatt_char(target, frame, response=False)
-        log(f"[TX OK] -> {bx.short_uuid(target.uuid)}")
+        for frame, desc in todo:
+            await client.write_gatt_char(target, frame, response=False)
+            log(f"[TX OK] {desc} -> {bx.short_uuid(target.uuid)}")
+            await asyncio.sleep(1.2 if len(todo) > 1 else 0.5)
 
         log(f"[*] 等待回包 {a.listen:.0f}s ……")
         await asyncio.sleep(a.listen)
@@ -184,7 +190,17 @@ def _decode(b: bytes):
                     else:
                         log(f"    -> 下次杀菌字段=0x{s[18:26]}（未设置或已过期）")
         elif pre in ("BD0D07", "BD0D08"):
-            log(f"    -> 定时列表包：{s[6:]}")
+            body = s[6:]
+            items = []
+            for i in range(0, len(body) - 5, 6):
+                c = body[i:i + 6]
+                h, m, d = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+                if h == 0xFF or m == 0xFF:
+                    continue
+                if 0 <= h < 24 and 0 <= m < 60 and 1 <= d <= 6:
+                    items.append((h, m, d))
+            pretty = ", ".join(f"{h:02d}:{m:02d} / {d}分钟" for h, m, d in items) or "空"
+            log(f"    -> 定时列表（{len(items)} 条）：{pretty}")
         elif pre in ("BD0805", "BD0806"):
             log("    -> 消杀日志包")
         elif pre == "BD05A1":
@@ -204,6 +220,7 @@ def cli():
     ap.add_argument("--start", action="store_true", help="立即开启消杀（验证通道）")
     ap.add_argument("--stop", action="store_true", help="关闭")
     ap.add_argument("--query", action="store_true", help="查询状态")
+    ap.add_argument("--list", action="store_true", help="读取定时列表")
     ap.add_argument("--listen", type=float, default=6.0)
     ap.add_argument("--scan-time", type=float, default=8.0)
     ap.add_argument("--connect-timeout", type=float, default=25.0)
@@ -212,7 +229,7 @@ def cli():
 
     if args.at and "=" not in args.at:
         args.at = f"{args.at}={args.dur}"
-    if not (args.at or args.start or args.stop or args.query):
+    if not (args.at or args.start or args.stop or args.query or args.list):
         ap.print_help()
         return 2
     try:
