@@ -23,10 +23,11 @@ protocol** from the mini program bundle and ships two ready-to-use controllers:
 
 1. Open https://emfox.github.io/QUANGE-Controller/ in **Chrome on Android**
 2. Long-press the button on the device for **3 seconds** to power it on
-3. Tap *Connect* → pick `QUANGE-WY020702` from the browser dialog
-4. Pick a time → *Save*
+3. Tap *Connect* → pick the device (it may appear as `QUANGE-WY020702` **or** `kHID`)
+4. Tap *Read from device* → add/remove entries → *Save to device*
 
-The page shows live state: idle / sterilizing with countdown, next scheduled run, battery level.
+The page shows live state: idle / sterilizing with countdown, next run, battery, firmware version.
+Up to **4** schedule entries, 3–6 minutes each, fully editable (multiple entries verified).
 
 > Web Bluetooth is not available in iOS Safari. Apple devices cannot use the web app.
 
@@ -54,7 +55,7 @@ frames start with `DB`. The device replies on `00001002-...` with frames startin
 | Start now | `DB 02 04 01` |
 | Stop | `DB 02 04 00` |
 | Query state | `DB 04 02` + 4-byte big-endian unix seconds |
-| Query schedule | `DB 01 05` |
+| Query schedule | `DB 01 07` (not answered unless `DB 04 02` + `DB 01 05` precede it) |
 | **Set schedule (whole-list replace)** | `DB 08 08 <count>` + `[HH MM 0D] × count` |
 | Delete | `DB 00 08 <count>` + `[HH MM 0D] × count` |
 

@@ -61,14 +61,18 @@ DB | CMD | SUB | [LEN] | [DATA...]
 | Start sterilization now | `DB 02 04 01` | `BD 0B 02` |
 | Stop | `DB 02 04 00` | `BD 0B 02` |
 | Query state | `DB 04 02` + 4-byte unix seconds | `BD 0E 02` / `BD 11 02` / `BD 00 02` / `BD 02 02` |
-| Query schedule | `DB 01 05` | `BD 0D 07` |
+| **Query schedule** | **`DB 01 07`** | `BD 0D 07` |
+| Query usage log | `DB 01 05` | `BD 08 05` |
 | **Set schedule (whole-list replace)** | `DB 08 08` + `Count` + `[HH MM 0D] × Count` | `BD 0D 08` |
 | Delete entries | `DB 00 08` + `Count` + `[HH MM 0D] × Count` | — |
-| Query misc state | `DB 01 07` | — |
-| Version / model | `DB 01 A4` | — |
+| Version | `DB 01 A4` | `BD 06 A2` + ASCII version (observed `000014`) |
 | Device reset | `DB 01 A0` | — |
 | Log acknowledgement | `DB 06 06 01` + 4-byte timestamp | — |
 | OTA chunks | `01 FF` / `02 FF ...` | — |
+
+> Sending `DB 01 07` on its own returns **nothing**. The device only answers after the full
+> sequence `DB 04 02` → `DB 01 05` → `DB 01 07`. This is the least intuitive part of the
+> protocol and cost real debugging time.
 
 ### 3.1 Power / immediate run
 
@@ -104,6 +108,14 @@ Examples:
 | Daily 03:00, 5 min | `DB 08 08 01 03 00 05` |
 | Daily 02:00, 3 min | `DB 08 08 01 02 00 03` |
 | 03:00/5min + 15:30/4min | `DB 08 08 02 03 00 05 0F 1E 04` |
+
+**Multiple entries are verified working**: after writing two entries the device replied
+`BD0D08 030005 0F1E04 FF FF FF FF FF FF 00`, and `DB 01 07` read back the same two.
+The vendor UI allows at most 4, so design for 4.
+
+**Empty slots and the trailing byte**: the `BD0D07` / `BD0D08` payload is a fixed-slot table
+(3 bytes per slot, empty slots are `FF FF FF`) followed by one extra byte (observed `0C` and
+`00`; purpose unknown and not needed when writing). Skip `FF` slots and ignore the last byte.
 
 > Because the semantics are a whole-table replace, **you never need to read the current list
 > first** — just write the list you want.
@@ -198,8 +210,8 @@ The mini program's original flow, safe to copy:
 connect
  → subscribe to every notifiable characteristic (especially 1002)
  → DB 04 02 + current unix seconds   // clock sync + state
- → DB 01 05                          // schedule
- → DB 01 07                          // misc state
+ → DB 01 05                          // usage log
+ → DB 01 07                          // schedule list (critical)
  → DB 01 A4                          // version
  → DB 04 02 + current unix seconds   // sync again
 ```
@@ -232,6 +244,9 @@ Environment: Windows + Python `bleak`; ~30 cm away, RSSI −55 to −72 dBm.
 | Channel check | `DB 02 04 01` | `BD0B02 01 00B4 0000 64 0005 EEC0 00` | Indicator switched to breathing, device obeyed |
 | Write schedule | `DB 08 08 01 03 00 05` | `BD0D08 030005 FF×9 0C` | Saved, previous list replaced |
 | Confirm state | `DB 04 02 + ts` | `BD0E02 00 ...` | Next run = 2026-10-23 03:00:00 |
+| **Multiple entries** | `DB 08 08 02 03 00 05 0F 1E 04` | `BD0D08 030005 0F1E04 FF×6 00` | Both accepted |
+| **Read back list** | `DB 04 02` → `DB 01 05` → `DB 01 07` | `BD0D07 030005 0F1E04 FF×6 00` | Same two entries, exact match |
+| Firmware version | `DB 01 A4` | `BD06A2` + `"000014"` | Firmware `000014` |
 
 Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no binding is involved.
 
