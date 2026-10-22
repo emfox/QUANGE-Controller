@@ -231,6 +231,120 @@ Single domain: `https://api.sh-lifefun.cn` (dead, connection fails).
 
 ---
 
+## 5.1 Firmware update (OTA)
+
+The mini program **contains a complete OTA implementation**, and it speaks Telink's standard OTA
+service. It **depends entirely on the now-dead backend**, so it cannot run today — the mechanism
+is documented below for the record, and in case a `.bin` ever surfaces.
+
+### 5.1.1 Trigger chain
+
+```
+connect -> send DB 04 02 / DB 01 05 / DB 01 07 / DB 01 A4 in sequence
+                                            ^ this last one reads the firmware version
+   |
+   +-> device replies BD 06 A2 <version>
+   |
+   +-> app requests the backend with that version
+       GET /wx_mini/v1/hilinkdevice/query_update_soft
+           ?version_now=<ver>&product_code=disinfect_box&soft_type=1
+   |
+   +-> code == 200 and is_must == 1 -> mandatory-upgrade dialog, keep path / version / notice
+       code == 300                  -> already up to date
+   |
+   +-> GET /wx_mini/v1/hilinkdevice/download?path=<path>   (downloads the .bin)
+   |
+   +-> connect to the OTA service and stream chunks
+```
+
+Note `product_code` is hard-coded to **`disinfect_box`** and `soft_type` to `1` — the firmware is
+managed under a "disinfection box" product category in the vendor backend.
+
+### 5.1.2 Version parsing
+
+```js
+var s = Number(buf2hex(value).substring(15,16) + buf2hex(value).substring(17,18));
+```
+
+That is: take the **high nibble of hex byte 2** (`15..16`) and the **low nibble of hex byte 4**
+(`17..18`) and concatenate them. The observed `...000014` yields **14**.
+
+> ⚠️ The previously documented sample `BD06A2` + `"000014"` is only 6 bytes — **too short**
+> (reaching hex index 18 requires at least 9 bytes). The real reply is longer; its full layout has
+> **not been verified**. If you want to implement version reading yourself, dump the whole
+> `DB 01 A4` reply first and decide the parsing from that.
+
+### 5.1.3 OTA channel
+
+| Item | Value |
+| --- | --- |
+| OTA service | `00010203-0405-0607-0809-0A0B0C0D1912` |
+| OTA characteristic | **taken at runtime as `characteristics[0].uuid`** |
+| Write mode | `write-without-response` |
+| Checksum | **CRC16** (Modbus polynomial `0xA001`, init `0xFFFF`) |
+
+> **About `...0A0B0C0D2B12`**: that value **never appears in `app-service.js`**. The app reads
+> `characteristics[0].uuid` dynamically, so this specific UUID is a **plausible inference, not a
+> verified fact**. Confirming it requires enumerating the service's characteristics on a real
+> device. (Likewise the control channel's write characteristic is taken as `characteristics[1].uuid`
+> — it just happens to be `1001` in practice.)
+
+### 5.1.4 Chunking and state machine
+
+```js
+// 1. split into 16-byte blocks
+updata_press = (len % 16 == 0) ? len/16 : floor(len/16) + 1
+
+// 2. build 18 bytes per block: seq(2, little-endian) + data(16, 0xFF-padded)
+//    then CRC16 the 18 bytes; store the result as a hex string in otaArr
+
+// 3. ReadyOTA: send 01 FF first (handshake / enter OTA mode)
+//    -> on success record OTAtime, proceed to StartOTA
+
+// 4. StartOTA: setInterval, one block every 15 ms
+//    updata_buff_cnt++ after each block
+//    on failure: if BleCon is still up, retry (a--, resend); otherwise fail the whole upgrade
+
+// 5. after the last block, send an 8-byte trailer:
+//    [0]=02 [1]=FF [2..3]=updata_press (LE) [4..5]=~updata_press (LE) [6..7]=00 00
+//    + CRC16
+```
+
+Key points:
+
+- **CRC16 is computed over the frame content and appended as a hex string** (not raw bytes), so
+  the length varies — very different from the control channel, which has no checksum at all;
+- block interval is **15 ms**, deliberately conservative;
+- the app **closes the control connection first** (`t.close()`), then waits 2 s before streaming.
+
+### 5.1.5 Can it still be updated?
+
+**Basically no.** `api.sh-lifefun.cn` is completely gone:
+
+```
+DNS:  api.sh-lifefun.cn -> 182.92.167.52   (record still present)
+443:  connection timed out
+ 80:  connection timed out
+```
+
+So:
+
+| Step | Status |
+| --- | --- |
+| Check for a new version | ❌ needs the backend |
+| Download firmware | ❌ needs the backend |
+| Flash manually | ⚠️ protocol known, but **no firmware file**, and the OTA characteristic is unconfirmed |
+
+**In theory**, given a `.bin` you could hand-flash it using 5.1.4. But the risk is high (a bad
+write bricks the unit, with no factory image to roll back), so **do not attempt this without an
+original firmware file**.
+
+> Aside: to capture the raw `DB 06 A2` reply, note that `python3 tools/set_timer.py --query` dumps
+> every reply to the log, but the version frame needs `DB 01 A4`, which the script does not send
+> yet — you can add one line temporarily.
+
+---
+
 ## 6. Why the name says `Hi-`
 
 The GAP name is `Hi-YM01-XXXXXXXXXXXX`. The `Hi-` prefix plus `YM01` is the HiLink-platform naming
@@ -238,7 +352,7 @@ used by the sibling white-label units (婴觅 / 得途), and the GATT does expos
 service template:
 
 ```
-00010203-0405-0607-0809-0a0b0c0d1912   (char ...2b12, OTA)
+00010203-0405-0607-0809-0a0b0c0d1912   (OTA service; char UUID resolved at runtime)
 000000fb-0000-1000-8000-00805f9b34fb   (1001/1002, the actual control channel)
 ```
 
