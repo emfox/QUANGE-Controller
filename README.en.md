@@ -121,6 +121,8 @@ recovered, everything fell into place.
 
 ## Known limitations
 
+- **The advertising name alternates**: observed flipping between `QUANGE-WY020702` and `kHID`.
+  Name-based scanning must accept both (the web app already does);
 - Setting a schedule is a whole-list replace, so only one entry is written at a time
   (device semantics, not a limitation of this project);
 - The mini program validated "two schedules must be more than one hour apart"; whether the

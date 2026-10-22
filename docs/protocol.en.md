@@ -10,7 +10,7 @@
 
 | Item | Value |
 | --- | --- |
-| Advertising name | `QUANGE-WY020702` |
+| Advertising name | `QUANGE-WY020702` **or** `kHID` — the device alternates between the two |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | Advertising payload | Service UUIDs `0x1812` (HID) + `0x180F` (Battery); manufacturer data starts with the MAC prefix |
 | SoC | Telink, PnP ID `0x248A:0x6682` |
