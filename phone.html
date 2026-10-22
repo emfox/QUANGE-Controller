@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f7f7f9">
+<title>全格杀菌杯架</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --card:#ffffff; --text:#1d1d1f; --sub:#86868b;
+    --line:#e5e5ea; --accent:#0a84ff; --ok:#34c759; --warn:#ff9500; --err:#ff3b30;
+    --radius:16px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#000; --card:#1c1c1e; --text:#f5f5f7; --sub:#8e8e93;
+           --line:#2c2c2e; --accent:#0a84ff; }
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;padding:20px 16px 40px;background:var(--bg);color:var(--text);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    max-width:520px;margin-inline:auto;
+  }
+  h1{font-size:22px;margin:0 0 4px;font-weight:600;letter-spacing:-.02em}
+  .hint{color:var(--sub);font-size:13px;margin:0 0 20px}
+  .card{background:var(--card);border-radius:var(--radius);padding:18px;margin-bottom:14px;
+        box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .card h2{font-size:13px;font-weight:600;color:var(--sub);margin:0 0 12px;
+           text-transform:uppercase;letter-spacing:.04em}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+       padding:8px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none;padding-bottom:0}
+  .row .k{color:var(--sub);font-size:14px;flex:0 0 auto}
+  .row .v{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--sub);
+       margin-right:6px;vertical-align:1px}
+  .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(52,199,89,.18)}
+  button{
+    font:inherit;font-weight:500;border:none;border-radius:12px;padding:14px 18px;
+    background:var(--accent);color:#fff;width:100%;cursor:pointer;
+    transition:opacity .15s,transform .1s;
+  }
+  button:active{transform:scale(.985);opacity:.85}
+  button:disabled{background:var(--line);color:var(--sub);cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+  button.danger{background:transparent;color:var(--err);border:1px solid var(--line)}
+  .btnrow{display:flex;gap:10px;margin-top:12px}
+  .btnrow button{flex:1}
+  input[type=time],select{
+    font:inherit;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
+    background:var(--bg);color:var(--text);width:100%;
+  }
+  .field{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+  .field label{flex:0 0 72px;color:var(--sub);font-size:14px}
+  .big{font-size:28px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  #log{
+    font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sub);
+    max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all;
+    background:var(--bg);border-radius:10px;padding:12px;margin-top:4px;
+  }
+  .banner{font-size:13px;padding:12px 14px;border-radius:12px;margin-bottom:14px;
+          background:rgba(255,149,0,.12);color:var(--warn);display:none}
+  .banner.show{display:block}
+</style>
+</head>
+<body>
+
+<h1>全格杀菌杯架</h1>
+<p class="hint">WY020702 · 蓝牙直连 · 无需绑定</p>
+
+<div class="banner" id="unsupported">
+  当前浏览器不支持 Web Bluetooth。请用 <b>Android 版 Chrome</b> 打开本页（iOS 不支持）。
+</div>
+
+<!-- 连接 -->
+<div class="card">
+  <h2>连接</h2>
+  <div class="row">
+    <span class="k">状态</span>
+    <span class="v"><span class="dot" id="dot"></span><span id="connText">未连接</span></span>
+  </div>
+  <div class="row">
+    <span class="k">设备</span>
+    <span class="v" id="devName">—</span>
+  </div>
+  <div class="btnrow">
+    <button id="btnConnect">连接设备</button>
+    <button id="btnDisconnect" class="ghost" disabled>断开</button>
+  </div>
+  <div class="btnrow" style="margin-top:8px">
+    <button id="btnAll" class="ghost" style="font-size:13px;padding:10px">
+      找不到？显示全部蓝牙设备
+    </button>
+  </div>
+</div>
+
+<!-- 状态 -->
+<div class="card">
+  <h2>当前状态</h2>
+  <div class="big" id="stateMain" style="margin-bottom:12px">—</div>
+  <div class="row"><span class="k">下次杀菌</span><span class="v" id="nextTime">—</span></div>
+  <div class="row"><span class="k">电量</span><span class="v" id="battery">—</span></div>
+  <div class="btnrow">
+    <button id="btnRefresh" class="ghost">刷新状态</button>
+  </div>
+</div>
+
+<!-- 设定时 -->
+<div class="card">
+  <h2>设定时</h2>
+  <div class="field">
+    <label>时间</label>
+    <input type="time" id="at" value="03:00">
+  </div>
+  <div class="field">
+    <label>时长</label>
+    <select id="dur">
+      <option value="3">3 分钟</option>
+      <option value="4">4 分钟</option>
+      <option value="5" selected>5 分钟</option>
+      <option value="6">6 分钟</option>
+    </select>
+  </div>
+  <button id="btnSave">保存（覆盖原定时）</button>
+  <p class="hint" style="margin:12px 0 0">
+    每次只写一条定时，原有列表会被整表覆盖。时长可选 3~6 分钟。
+  </p>
+</div>
+
+<!-- 手动 -->
+<div class="card">
+  <h2>手动</h2>
+  <div class="btnrow" style="margin-top:0">
+    <button id="btnStart">立即消杀</button>
+    <button id="btnStop" class="danger">关闭</button>
+  </div>
+</div>
+
+<!-- 日志 -->
+<div class="card">
+  <h2>日志</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const SERVICE = "000000fb-0000-1000-8000-00805f9b34fb";
+  const CH_WRITE = "00001001-0000-1000-8000-00805f9b34fb";
+  const CH_NOTIFY = "00001002-0000-1000-8000-00805f9b34fb";
+
+  const $ = id => document.getElementById(id);
+  let device = null, server = null, chWrite = null, chNotify = null;
+  let lastNotify = null;
+
+  // ---------- UI helpers ----------
+  function log(msg) {
+    const el = $("log");
+    const t = new Date().toTimeString().slice(0, 8);
+    el.textContent += `[${t}] ${msg}\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+  const hex = arr => Array.from(new Uint8Array(arr))
+      .map(b => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+
+  function setConnected(on) {
+    $("dot").className = "dot" + (on ? " on" : "");
+    $("connText").textContent = on ? "已连接" : "未连接";
+    $("btnConnect").disabled = on;
+    $("btnDisconnect").disabled = !on;
+    ["btnRefresh", "btnSave", "btnStart", "btnStop"].forEach(id => $(id).disabled = !on);
+  }
+
+  // ---------- 帧构造 ----------
+  function frameSetTimer(hh, mm, dur) {
+    // DB 08 08 01 HH MM 0D
+    return new Uint8Array([
+      0xDB, 0x08, 0x08, 0x01, hh, mm, 0x00 | dur
+    ]);
+  }
+  function frameQuery() {
+    const ts = Math.floor(Date.now() / 1000);
+    return new Uint8Array([
+      0xDB, 0x04, 0x02,
+      (ts >>> 24) & 0xFF, (ts >>> 16) & 0xFF, (ts >>> 8) & 0xFF, ts & 0xFF
+    ]);
+  }
+  const FRAME_START = new Uint8Array([0xDB, 0x02, 0x04, 0x01]);
+  const FRAME_STOP  = new Uint8Array([0xDB, 0x02, 0x04, 0x00]);
+
+  // ---------- 回包解析 ----------
+  function onNotify(event) {
+    const v = event.target.value;
+    const s = Array.from(new Uint8Array(v.buffer || v))
+      .map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+    lastNotify = s;
+    log("回包 " + s);
+
+    const pre = s.slice(0, 6);
+    const st = s.slice(6, 8);
+
+    // 状态类：BD0B02 / BD0E02 / BD1102 / BD0002 / BD0202
+    if (["BD0B02", "BD0E02", "BD1102", "BD0002", "BD0202"].includes(pre)) {
+      const bat = parseInt(s.slice(16, 18), 16);
+      if (!isNaN(bat)) $("battery").textContent = bat + "%";
+
+      if (st === "01") {
+        const a0 = parseInt(s.slice(8, 12), 16);
+        const a1 = parseInt(s.slice(12, 16), 16);
+        const left = Math.max(0, a0 - a1);
+        $("stateMain").textContent = `消杀中 · 剩余 ${Math.floor(left / 60)}分${left % 60}秒`;
+        $("stateMain").style.color = "var(--ok)";
+      } else {
+        $("stateMain").textContent = "待机";
+        $("stateMain").style.color = "";
+        const nxt = parseInt(s.slice(18, 26), 16);
+        if (nxt > 1600000000) {
+          const d = new Date(nxt * 1000);
+          const pad = n => String(n).padStart(2, "0");
+          $("nextTime").textContent =
+            `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } else {
+          $("nextTime").textContent = "未设置";
+        }
+      }
+      return;
+    }
+    if (pre === "BD0D08") {
+      log("定时已保存 ✓");
+      return;
+    }
+    if (pre === "BD0D07") {
+      log("当前定时列表：" + s.slice(6));
+      return;
+    }
+    if (pre === "BD05A1") {
+      log("设备电量过低，请更换电池");
+      $("battery").textContent = "电量低";
+    }
+  }
+
+  // ---------- 连接 ----------
+  async function connect(showAll) {
+    try {
+      log(showAll ? "扫描全部蓝牙设备…" : "扫描 QUANGE 设备…");
+      const opts = showAll
+        ? { acceptAllDevices: true, optionalServices: [SERVICE] }
+        : { filters: [{ namePrefix: "QUANGE" }, { namePrefix: "Hi-YM01" },
+                      { namePrefix: "WY" }],
+            optionalServices: [SERVICE] };
+
+      device = await navigator.bluetooth.requestDevice(opts);
+      device.addEventListener("gattserverdisconnected", () => {
+        log("设备已断开");
+        setConnected(false);
+        $("stateMain").textContent = "—";
+      });
+
+      log("正在连接 " + (device.name || device.id) + " …");
+      server = await device.gatt.connect();
+      $("devName").textContent = device.name || device.id;
+
+      const svc = await server.getPrimaryService(SERVICE);
+      chWrite = await svc.getCharacteristic(CH_WRITE);
+
+      try {
+        chNotify = await svc.getCharacteristic(CH_NOTIFY);
+        await chNotify.startNotifications();
+        chNotify.addEventListener("characteristicvaluechanged", onNotify);
+        log("已订阅状态上报（1002）");
+      } catch (e) {
+        log("订阅通知失败：" + e.message + "（仍可写入）");
+      }
+
+      setConnected(true);
+      log("连接成功");
+      await new Promise(r => setTimeout(r, 300));
+      await query();
+    } catch (e) {
+      log("连接失败：" + (e.message || e));
+      setConnected(false);
+    }
+  }
+
+  async function disconnect() {
+    try {
+      if (chNotify) { try { await chNotify.stopNotifications(); } catch (_) {} }
+      if (device && device.gatt.connected) device.gatt.disconnect();
+    } catch (e) { log("断开异常：" + e.message); }
+    setConnected(false);
+  }
+
+  // ---------- 指令 ----------
+  async function send(frame, label) {
+    if (!chWrite) { log("尚未连接"); return; }
+    try {
+      await chWrite.writeValueWithoutResponse(frame);
+      log(`发送 ${label}：${hex(frame)}`);
+    } catch (e) {
+      // 有些浏览器不实现 withResponse 才会报错，退一步再试
+      try {
+        await chWrite.writeValue(frame);
+        log(`发送 ${label}（带应答）：${hex(frame)}`);
+      } catch (e2) {
+        log("发送失败：" + (e2.message || e2));
+      }
+    }
+  }
+
+  async function query() {
+    await send(frameQuery(), "查询状态");
+    await new Promise(r => setTimeout(r, 900));
+  }
+
+  async function saveTimer() {
+    const v = $("at").value || "03:00";
+    const [hh, mm] = v.split(":").map(Number);
+    const dur = Number($("dur").value);
+    if (isNaN(hh) || isNaN(mm)) { log("时间格式不对"); return; }
+    localStorage.setItem("quange_at", v);
+    localStorage.setItem("quange_dur", String(dur));
+    await send(frameSetTimer(hh, mm, dur), `设定时 ${v}/${dur}分钟`);
+    await new Promise(r => setTimeout(r, 800));
+    await query();
+  }
+
+  // ---------- 绑定事件 ----------
+  function init() {
+    if (!navigator.bluetooth) {
+      $("unsupported").classList.add("show");
+      $("btnConnect").disabled = true;
+      $("btnAll").disabled = true;
+    }
+    const sa = localStorage.getItem("quange_at");
+    const sd = localStorage.getItem("quange_dur");
+    if (sa) $("at").value = sa;
+    if (sd) $("dur").value = sd;
+
+    setConnected(false);
+    $("btnConnect").onclick = () => connect(false);
+    $("btnAll").onclick = () => connect(true);
+    $("btnDisconnect").onclick = disconnect;
+    $("btnRefresh").onclick = query;
+    $("btnSave").onclick = saveTimer;
+    $("btnStart").onclick = async () => { await send(FRAME_START, "立即消杀"); };
+    $("btnStop").onclick = async () => { await send(FRAME_STOP, "关闭"); };
+    log("准备就绪。请先长按杯架按键 3 秒开机，再点「连接设备」。");
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+blectx.py —— 共享的 BLE 上下文工具
+
+Windows 上的一个硬坑：不能拿一串 MAC 地址去 BleakClient(address)，
+必须先扫描拿到 BLEDevice 对象再连，否则常报
+    BleakDeviceNotFoundError: Device with address ... was not found.
+本模块统一处理这件事。
+"""
+import asyncio
+
+from bleak import BleakClient, BleakScanner
+
+
+def short_uuid(u):
+    u = str(u).lower()
+    if u.startswith("0000") and u.endswith("-0000-1000-8000-00805f9b34fb"):
+        return u[4:8]
+    return u
+
+
+def hexs(b):
+    return b.hex(" ").upper() if b else ""
+
+
+async def scan_all(timeout: float = 10.0):
+    """返回 {address: (BLEDevice, AdvertisementData)}"""
+    res = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    # bleak 3.x 保证返回 dict；低版本可能返回 list
+    if isinstance(res, dict):
+        return res
+    return {d.address: (d, adv) for d, adv in res}
+
+
+def _norm(a: str) -> str:
+    return a.replace(":", "").replace("-", "").upper()
+
+
+async def find_device(name=None, address=None, timeout: float = 10.0, quiet=False):
+    """扫一遍并按 MAC / 名字找设备，返回 (BLEDevice, AdvertisementData) 或 (None, None)"""
+    if not quiet:
+        print(f"[*] 扫描 {timeout:.0f}s ……")
+    found = await scan_all(timeout)
+
+    hits = []
+    if address:
+        n = _norm(address)
+        for addr, (dev, adv) in found.items():
+            if _norm(addr) == n or _norm(dev.address) == n:
+                hits.append((dev, adv, 0))
+    if name:
+        key = name.lower()
+        for addr, (dev, adv) in found.items():
+            nm = (adv.local_name or dev.name or "")
+            if key in nm.lower():
+                hits.append((dev, adv, 1))
+
+    if hits:
+        hits.sort(key=lambda x: (x[2], -((x[1].rssi if x[1].rssi is not None else -999))))
+        dev, adv, _ = hits[0]
+        if not quiet:
+            print(f"[+] 命中 {adv.local_name or dev.name or '(无名)'} @ {dev.address} "
+                  f"({adv.rssi} dBm)")
+        return dev, adv
+
+    if not quiet:
+        print("[!] 没找到目标。当前可见设备（按信号强弱）：")
+        rows = sorted(found.values(), key=lambda x: -((x[1].rssi if x[1].rssi is not None else -999)))
+        for dev, adv in rows[:20]:
+            print(f"    {str(adv.rssi):>4}dBm  {adv.local_name or dev.name or '(无名)':26}  {dev.address}")
+        print("    —— 若目标不在列表里：确认已长按 3 秒开机；把手机蓝牙关掉避免被占；换新电池。")
+    return None, None
+
+
+async def connect(name=None, address=None, scan_time=10.0, timeout=20.0,
+                  on_disconnect=None, quiet=False, retries=3):
+    """扫描 + 连接（失败自动重试，每次重新扫描拿最新的 BLEDevice）
+
+    弱信号（<-80dBm）时 Windows 的 GATT 服务发现经常超时，重试通常能救回来。
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
+        dev, adv = await find_device(name, address, scan_time, quiet)
+        if dev is None:
+            last_err = "device not found"
+            await asyncio.sleep(2)
+            continue
+        rssi = adv.rssi if adv.rssi is not None else -999
+        if not quiet:
+            print(f"[*] 第 {attempt}/{retries} 次连接 {dev.address} (RSSI {rssi}) ……")
+        client = BleakClient(dev, timeout=timeout, disconnected_callback=on_disconnect)
+        try:
+            await client.connect()
+            if client.is_connected:
+                return client
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            if not quiet:
+                print(f"[!] 连接失败: {last_err}")
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+            continue
+
+    print(f"[x] 连接最终失败（{last_err}）")
+    print("    排查：1) 把杯架挪到电脑 30cm 内，信号需 > -70dBm；"
+          "2) 关掉手机蓝牙与小程序；3) 换 3 节新碱性电池；4) 长按关机再长按开机后立刻重试。")
+    return None
+
+
+def find_char(client, spec: str):
+    """按完整 UUID / 短 UUID / handle 找特征值"""
+    s = str(spec).lower().replace("-", "").strip()
+    chars = [c for svc in client.services for c in svc.characteristics]
+    for c in chars:
+        if c.uuid.lower() == s:
+            return c
+    if s.isdigit() and len(s) <= 3:
+        for c in chars:
+            if c.handle == int(s):
+                return c
+    short = s[-4:]
+    for c in chars:
+        if short_uuid(c.uuid) == short:
+            return c
+    for c in chars:
+        if c.uuid.lower().replace("-", "").startswith("0000" + short):
+            return c
+    # 非标准基址的私有 UUID：直接用原始 UUID 的尾部匹配
+    for c in chars:
+        if c.uuid.lower().replace("-", "").endswith(short):
+            return c
+    return None
+
+
+def list_chars(client):
+    out = []
+    for svc in client.services:
+        for c in svc.characteristics:
+            out.append(c)
+    return out
+
+
+def writable(client):
+    return [c for c in list_chars(client)
+            if "write" in c.properties or "write-without-response" in c.properties]
+
+
+def notifiable(client):
+    return [c for c in list_chars(client)
+            if "notify" in c.properties or "indicate" in c.properties]
+
+
+async def dump_gatt(client, log=print, listen=0.0, subscribe=True):
+    """枚举并打印整棵 GATT 树，读取可读值，订阅可通知值。
+
+    返回 dict：{"tree": [...], "writable": [...], "notifiable": [...], "notifications": [...]}
+    """
+    notifications = []
+
+    def on_notify(char, data: bytearray):
+        line = f"[NOTIFY] {short_uuid(char.uuid)} <- {hexs(data)}"
+        notifications.append(line)
+        log(line)
+
+    tree, readable, writable, notifiable = [], [], [], []
+
+    log("\n--------------- GATT 结构 ---------------")
+    for svc in client.services:
+        log(f"\n[SERVICE] {svc.uuid}  ({short_uuid(svc.uuid)})")
+        for c in svc.characteristics:
+            props = "|".join(c.properties)
+            log(f"    [CHAR] {short_uuid(c.uuid):8}  h={c.handle:<4} props={props:32} "
+                f"{(c.description or '')[:34]}")
+            tree.append({"service": svc.uuid, "char": c.uuid, "handle": c.handle,
+                         "props": c.properties, "description": c.description})
+            if "read" in c.properties:
+                readable.append(c)
+            if "notify" in c.properties or "indicate" in c.properties:
+                notifiable.append(c)
+            if "write" in c.properties or "write-without-response" in c.properties:
+                writable.append(c)
+
+    log("\n--------------- 读值 ---------------")
+    if not readable:
+        log("(无)")
+    for c in readable:
+        try:
+            val = await client.read_gatt_char(c)
+            asc = "".join(chr(b) if 32 <= b < 127 else "." for b in val)
+            log(f"  {short_uuid(c.uuid):8} h{c.handle:<4} = {hexs(val):58} |{asc}|")
+        except Exception as e:
+            log(f"  {short_uuid(c.uuid):8} h{c.handle:<4} 读取失败: {type(e).__name__}: {e}")
+
+    log("\n--------------- 判定 ---------------")
+    log("WRITE  : " + (", ".join(f"{short_uuid(c.uuid)}(h{c.handle})" for c in writable) or "无"))
+    log("NOTIFY : " + (", ".join(f"{short_uuid(c.uuid)}(h{c.handle})" for c in notifiable) or "无"))
+    if writable:
+        log("[结论] 可写通道存在 → 可以用 write.py 试探。")
+    else:
+        log("[结论] 无可写特征值 → 通用 BLE 工具写不了参数。")
+
+    if subscribe:
+        for c in notifiable:
+            try:
+                await client.start_notify(c, on_notify)
+                log(f"[+] 订阅 {short_uuid(c.uuid)}")
+            except Exception as e:
+                log(f"[!] 订阅 {short_uuid(c.uuid)} 失败: {type(e).__name__}: {e}")
+
+    if notifiable and listen > 0:
+        log(f"\n[*] 监听 {listen:.0f}s —— 现在按机身按键（双击 = 立即杀菌），看是否上报。")
+        await asyncio.sleep(listen)
+
+    return {"tree": tree,
+            "writable": [c.uuid for c in writable],
+            "notifiable": [c.uuid for c in notifiable],
+            "notifications": notifications}
+
+
+if __name__ == "__main__":
+    print("blectx 工具模块，直接运行会做一次扫描连通性自检：")
+    asyncio.run(find_device())
