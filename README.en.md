@@ -3,7 +3,7 @@
 Third-party controller and BLE protocol documentation for the **QUANGE (全格) WY020702**
 smart sterilizing toothbrush holder.
 
-The vendor's WeChat mini program (*莱枫智能*) went offline together with its backend, leaving the
+The vendor's WeChat mini program (*莱枫智能生活*) went offline together with its backend, leaving the
 device locked to its factory schedule. This repository reconstructs the device's **plaintext BLE
 protocol** from the mini program bundle and ships two ready-to-use controllers:
 
@@ -102,7 +102,7 @@ Full field descriptions, reply parsing and the init sequence:
 | SoC | Telink, PnP ID `0x248A:0x6682` |
 | Power | 3 × AA cells, BLE only, no Wi-Fi |
 | UVC | Seoul Viosys 275 nm |
-| Original app | WeChat mini program *莱枫智能* (appid `wx9528fce803d3ba0e`, offline) |
+| Original app | WeChat mini program *莱枫智能生活* (appid `wx9528fce803d3ba0e`, offline) |
 
 ---
 
@@ -118,6 +118,15 @@ device. That is not what happened:
 
 The only real obstacle was that **the frame format was unknown**. Once `app-service.js` was
 recovered, everything fell into place.
+
+Two things are easy to conflate here, so to be precise:
+
+| | Encrypted? |
+| --- | --- |
+| **Mini program bundle** (`__APP__.wxapkg`) | **Yes.** A `V1MMWX` container: drop the 6-byte header, XOR the whole body with `0x30`. It must be decrypted before the code can be read |
+| **Device BLE protocol** (`DB` / `BD` frames) | **No.** Plaintext hex — no checksum, no session key, no bonding |
+
+In short: **the bundle must be decrypted; the protocol does not.**
 
 ---
 
