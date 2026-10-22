@@ -125,6 +125,9 @@ recovered, everything fell into place.
 
 - **The advertising name alternates**: observed flipping between `QUANGE-WY020702` and `kHID`.
   Name-based scanning must accept both (the web app already does);
+- **The device stops advertising while connected**: a BLE peripheral halts advertising once a
+  central connects, so **only one host can control it at a time**. While your phone is connected
+  the PC cannot see it, and vice versa. Press *Disconnect* before switching controllers;
 - Setting a schedule is a whole-list replace, so only one entry is written at a time
   (device semantics, not a limitation of this project);
 - The mini program validated "two schedules must be more than one hour apart"; whether the
