@@ -26,8 +26,9 @@ protocol** from the mini program bundle and ships two ready-to-use controllers:
 3. Tap *Connect* → pick the device (it may appear as `QUANGE-WY020702` **or** `kHID`)
 4. Tap *Read from device* → add/remove entries → *Save to device*
 
-The page shows live state: idle / sterilizing with countdown, next run, battery, firmware version.
-Up to **4** schedule entries, 3–6 minutes each, fully editable (multiple entries verified).
+The page shows live state: idle / sterilizing with countdown, next run, battery, firmware version
+and the most recent run. Up to **4** schedule entries, 3–6 minutes each, fully editable
+(multiple entries verified). A *Read log* button pulls the device's sterilization history.
 
 > Web Bluetooth is not available in iOS Safari. Apple devices cannot use the web app.
 

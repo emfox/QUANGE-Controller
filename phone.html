@@ -112,6 +112,7 @@
   <div class="row"><span class="k">下次消杀</span><span class="v" id="nextTime">—</span></div>
   <div class="row"><span class="k">电量</span><span class="v" id="battery">—</span></div>
   <div class="row"><span class="k">固件版本</span><span class="v" id="fwVer">—</span></div>
+  <div class="row"><span class="k">最近一次消杀</span><span class="v" id="lastLog">—</span></div>
   <div class="btnrow">
     <button id="btnRefresh" class="ghost">刷新状态</button>
   </div>
@@ -130,6 +131,17 @@
   <p class="hint" style="margin:12px 0 0">
     最多 4 条，每条 3~6 分钟。保存时整表覆盖，设备上原有定时会被替换。
     多条之间的间隔需大于 1 小时（沿用原厂限制）。
+  </p>
+</div>
+
+<div class="card">
+  <h2>消杀记录</h2>
+  <div id="logList"><div class="empty">点「读取记录」拉取</div></div>
+  <div class="btnrow">
+    <button id="btnReadLogs" class="ghost">读取记录</button>
+  </div>
+  <p class="hint" style="margin:12px 0 0">
+    设备逐条推送记录，收到一条要回一次确认才会给下一条，单次最多读 12 条。
   </p>
 </div>
 
@@ -165,7 +177,9 @@
   const $ = id => document.getElementById(id);
   let device = null, server = null, chWrite = null, chNotify = null;
   let items = [];
+  let logs = [];
   let pendingList = false;
+  let logWaiter = null;
 
   const hex = arr => Array.from(new Uint8Array(arr))
       .map(b => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
@@ -182,7 +196,7 @@
     $("connText").textContent = on ? "已连接" : "未连接";
     $("btnConnect").disabled = on;
     $("btnDisconnect").disabled = !on;
-    ["btnRefresh", "btnSave", "btnStart", "btnStop", "btnRead", "btnAdd"]
+    ["btnRefresh", "btnSave", "btnStart", "btnStop", "btnRead", "btnAdd", "btnReadLogs"]
       .forEach(id => $(id).disabled = !on);
     if (!on) $("devName").textContent = "—";
     $("btnAdd").disabled = !on || items.length >= MAX_ITEMS;
@@ -201,8 +215,35 @@
   }
   const FRAME_LOG   = new Uint8Array([0xDB, 0x01, 0x05]);
   const FRAME_LIST  = new Uint8Array([0xDB, 0x01, 0x07]);
+  const FRAME_VER   = new Uint8Array([0xDB, 0x01, 0xA4]);
   const FRAME_START = new Uint8Array([0xDB, 0x02, 0x04, 0x01]);
   const FRAME_STOP  = new Uint8Array([0xDB, 0x02, 0x04, 0x00]);
+
+  // 日志确认帧：DB 06 06 01 + 4 字节开始时间戳
+  function frameLogAck(tsHex) {
+    const b = [0xDB, 0x06, 0x06, 0x01];
+    for (let i = 0; i < 8; i += 2) b.push(parseInt(tsHex.slice(i, i + 2), 16));
+    return new Uint8Array(b);
+  }
+
+  // 日志包：BD0805/BD0806 | 开始时间戳(8) | 时长秒(4) | 类型(2) | 状态(2)
+  function parseLog(s) {
+    return {
+      tsHex: s.slice(6, 14),
+      ts: parseInt(s.slice(6, 14), 16),
+      dur: parseInt(s.slice(14, 18), 16),
+      type: parseInt(s.slice(18, 20), 16),
+      st: parseInt(s.slice(20, 22), 16)
+    };
+  }
+
+  const fmtDur = sec => (sec >= 60
+    ? `${Math.floor(sec / 60)}分${sec % 60}秒`
+    : `${sec}秒`);
+  const fmtTime = ts => {
+    const d = new Date(ts * 1000);
+    return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
 
   // ---------- 回包 ----------
   function parseList(s) {
@@ -279,7 +320,18 @@
       return;
     }
 
-    if (pre === "BD0805" || pre === "BD0806") { log("（消杀日志包）"); return; }
+    if (pre === "BD0805" || pre === "BD0806") {
+      const r = parseLog(s);
+      if (r.ts === 0xFFFFFFFF) {
+        log("日志：没有更多记录");
+      } else {
+        log("日志：" + fmtTime(r.ts) + " " + fmtDur(r.dur) +
+            " 状态" + (r.st === 1 ? "结束" : "开始"));
+        if (r.dur > 0) $("lastLog").textContent = fmtTime(r.ts) + " · " + fmtDur(r.dur);
+      }
+      if (logWaiter) { const w = logWaiter; logWaiter = null; w(r); }
+      return;
+    }
     if (pre === "BD05A1") { log("设备电量过低，请更换电池"); $("battery").textContent = "电量低"; }
   }
 
@@ -442,9 +494,63 @@
     pendingList = false;
   }
 
+  function waitForLog(timeout) {
+    return new Promise(resolve => {
+      logWaiter = resolve;
+      setTimeout(() => {
+        if (logWaiter === resolve) { logWaiter = null; resolve(null); }
+      }, timeout || 3500);
+    });
+  }
+
+  function renderLogs() {
+    const box = $("logList");
+    if (!logs.length) { box.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+    box.innerHTML = "";
+    logs.forEach((r, i) => {
+      const d = document.createElement("div");
+      d.className = "item";
+      const n = document.createElement("span");
+      n.className = "no"; n.textContent = String(i + 1);
+      const t = document.createElement("span");
+      t.style.flex = "1"; t.textContent = fmtTime(r.ts);
+      const u = document.createElement("span");
+      u.style.cssText = "color:var(--sub);font-size:13px";
+      u.textContent = fmtDur(r.dur);
+      const st = document.createElement("span");
+      st.style.cssText = "color:var(--sub);font-size:13px;width:32px;text-align:right";
+      st.textContent = r.st === 1 ? "结束" : "开始";
+      d.appendChild(n); d.appendChild(t); d.appendChild(u); d.appendChild(st);
+      box.appendChild(d);
+    });
+  }
+
+  // 设备逐条推送，收到一条要回一次 DB060601+时间戳 才会给下一条
+  async function fetchLogs() {
+    logs = [];
+    renderLogs();
+    log("开始读取消杀记录…");
+    await send(FRAME_LOG, "查询日志");
+    for (let i = 0; i < 12; i++) {
+      const r = await waitForLog(2500);
+      if (!r) { log("日志读取超时，可能已读完"); break; }
+      if (r.ts === 0xFFFFFFFF) { log("设备回复没有更多记录"); break; }
+      if (r.ts > 1600000000 && !logs.some(x => x.tsHex === r.tsHex)) logs.push(r);
+      await send(frameLogAck(r.tsHex), "确认日志");
+    }
+    renderLogs();
+    log("共读到 " + logs.length + " 条记录");
+  }
+
+  async function readVersion() {
+    await send(FRAME_VER, "查询固件版本");
+    await new Promise(r => setTimeout(r, 700));
+  }
+
   async function refreshAll() {
     await refreshStatus();
     await readList();
+    await readVersion();
   }
 
   async function saveList() {
@@ -473,6 +579,7 @@
     $("btnDisconnect").onclick = disconnect;
     $("btnRefresh").onclick = refreshAll;
     $("btnRead").onclick = readList;
+    $("btnReadLogs").onclick = fetchLogs;
     $("btnSave").onclick = saveList;
     $("btnAdd").onclick = () => {
       if (items.length >= MAX_ITEMS) return;
