@@ -191,10 +191,38 @@ in section 4.
 
 | hex index | Meaning |
 | --- | --- |
-| `6..14` | Start timestamp |
-| `14..18` | Duration |
+| `6..14` | Start timestamp (8 hex, unix seconds) |
+| `14..18` | Duration in seconds |
 | `18..20` | Action type |
 | `20..22` | `00` start / `01` end |
+
+Real sample:
+
+```
+BD 08 05 6A D9 F7 9A 00 B4 01 01
+         ↑start ts    ↑180s  ↑type ↑end
+```
+
+**Logs are a stream: the device pushes one at a time and will not send the next until you
+acknowledge the current one.**
+
+Flow:
+
+```
+send DB 01 05
+  → receive BD0805 (record 1)
+  → reply DB 06 06 01 + that record's start timestamp (4 bytes)
+  → receive BD0805 (record 2)
+  → reply DB 06 06 01 + timestamp
+  → …
+  → when sub(6,14) == FFFFFFFF and state is 00, there are no more records
+```
+
+The original mini program stores both `00` (start) records and `01` (end) records, the latter
+only when duration is non-zero, and uploads the batch to its backend once `FFFFFFFF` arrives.
+
+> Because it is a stream, sending `DB 01 05` **without** acknowledging only ever yields the
+> first record. The acknowledgement carries the record's *start timestamp*, not a sequence number.
 
 ### 5.4 Warnings
 
@@ -247,6 +275,8 @@ Environment: Windows + Python `bleak`; ~30 cm away, RSSI −55 to −72 dBm.
 | **Multiple entries** | `DB 08 08 02 03 00 05 0F 1E 04` | `BD0D08 030005 0F1E04 FF×6 00` | Both accepted |
 | **Read back list** | `DB 04 02` → `DB 01 05` → `DB 01 07` | `BD0D07 030005 0F1E04 FF×6 00` | Same two entries, exact match |
 | Firmware version | `DB 01 A4` | `BD06A2` + `"000014"` | Firmware `000014` |
+| Log query | `DB 04 02` → `DB 01 05` | `BD0805 6AD9F79A 00B4 01 01` | Parsed as "start ts / 180 s / type 1 / end" |
+| Log streaming ack | `DB 06 06 01` + start ts | **not reproduced** | Mechanism taken from the client code; needs hardware confirmation |
 
 Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no binding is involved.
 
