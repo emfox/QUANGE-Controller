@@ -1,6 +1,6 @@
 # QUANGE WY020702 — Full BLE Protocol
 
-> Reconstructed from the discontinued WeChat mini program *莱枫智能*
+> Reconstructed from the discontinued WeChat mini program *莱枫智能生活*
 > (appid `wx9528fce803d3ba0e`, v18). Every item below was verified against real hardware;
 > see section 8 for the verification log.
 
@@ -17,6 +17,12 @@
 | Pairing | **Not required** — no pairing, no bonding, no encryption |
 | Frame encryption | **None** — plaintext hexadecimal |
 | Checksum | **None** — no CRC (OTA excepted) |
+
+> **Do not conflate two things.** "No encryption" here refers to the **BLE frames on the air**.
+> The mini program bundle itself **is** encrypted (a `V1MMWX` container: drop the 6-byte header,
+> then XOR the whole body with `0x30`) — that is the vendor's packaging protection and has
+> nothing to do with the device protocol.
+> In short: **the bundle must be decrypted; the protocol does not.**
 
 > The private service UUID is **not** present in the advertising payload, so you cannot filter
 > by service when scanning. Filter by name, or list all devices.

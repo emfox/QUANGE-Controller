@@ -30,7 +30,7 @@ C:\Users\<user>\AppData\Roaming\Tencent\xwechat\radium\users\<hash>\
 
 **Steps**
 
-1. Phone WeChat → Discover → Mini Programs → open *莱枫智能* → top-right `···` → forward to
+1. Phone WeChat → Discover → Mini Programs → open *莱枫智能生活* → top-right `···` → forward to
    *File Transfer*;
 2. On PC WeChat, open *File Transfer* and click that card;
 3. Wait until the LOGO appears (**hanging there is fine — the bundle is already on disk**);
@@ -52,6 +52,11 @@ The legacy format starts with `0xBE`; the new container is different:
 offset 0..6    magic ASCII "V1MMWX"
 offset 6..     entire payload, single-byte XOR with 0x30
 ```
+
+**The bundle itself is encrypted** — Tencent's container adds a XOR layer, so a `.wxapkg`
+cannot simply be unzipped; it has to be decrypted first. Note however that **only the bundle is
+encrypted — the device protocol is plaintext** (see [protocol.en.md](protocol.en.md)). The two
+are easy to conflate.
 
 How to detect it: check the entropy. Undecrypted it sits around **6.64** (AES output would be
 near 8.0) and shows many repeated printable-character patterns — the signature of a repeating-key
