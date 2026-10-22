@@ -224,6 +224,21 @@ only when duration is non-zero, and uploads the batch to its backend once `FFFFF
 > Because it is a stream, sending `DB 01 05` **without** acknowledging only ever yields the
 > first record. The acknowledgement carries the record's *start timestamp*, not a sequence number.
 
+**Verified on real hardware (2026-10-22)**: the ack loop works — 20 records read back to back,
+each one only arriving after the previous was acknowledged.
+
+Observed behaviour:
+
+- **Newest first**;
+- The device keeps a **ring buffer** of unknown depth: 20 records were read without reaching
+  the end, and reading further keeps going back in time;
+- Every record describes a **completed** run (status byte always `01`), duration always 180 s
+  in the observed history;
+- Some older records carry timestamps near zero (`00000000`, `0003D4C2`, …), which means the
+  **device clock had been reset** (battery swap without a time sync). Treat those times as
+  unknown — but they **still must be acknowledged**, otherwise the records behind them are
+  unreachable.
+
 ### 5.4 Warnings
 
 `BD05A1` = low battery.
@@ -276,7 +291,7 @@ Environment: Windows + Python `bleak`; ~30 cm away, RSSI −55 to −72 dBm.
 | **Read back list** | `DB 04 02` → `DB 01 05` → `DB 01 07` | `BD0D07 030005 0F1E04 FF×6 00` | Same two entries, exact match |
 | Firmware version | `DB 01 A4` | `BD06A2` + `"000014"` | Firmware `000014` |
 | Log query | `DB 04 02` → `DB 01 05` | `BD0805 6AD9F79A 00B4 01 01` | Parsed as "start ts / 180 s / type 1 / end" |
-| Log streaming ack | `DB 06 06 01` + start ts | **not reproduced** | Mechanism taken from the client code; needs hardware confirmation |
+| Log streaming ack | `DB 06 06 01` + start ts | one record per ack | **Verified**: 20 records, newest first, can keep going back |
 
 Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no binding is involved.
 
@@ -285,7 +300,12 @@ Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no bind
 ## 9. Unverified
 
 - Whether "two schedules must be ≥ 1 hour apart" is enforced by firmware or only by the UI
+- **Whether the duration byte (`0D`) actually takes effect** — every historical log entry shows
+  180 s, while the current schedule asks for 5 minutes; read the log again after the next
+  scheduled run to find out
 - Whether the schedule survives a battery swap (it should)
+- Depth limit of the log ring buffer
+- Whether "start" records exist at all (every record observed was `01` = end)
 - Whether the leading `0` in `0D` is a fixed prefix or a length/type marker
 - Full field layout of `BD0D07`
 - Maximum number of schedule entries
