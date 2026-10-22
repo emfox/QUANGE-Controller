@@ -62,16 +62,28 @@ How to detect it: check the entropy. Undecrypted it sits around **6.64** (AES ou
 near 8.0) and shows many repeated printable-character patterns — the signature of a repeating-key
 XOR.
 
-After decrypting, the layout resembles the old wxapkg but without a magic header, so the index
-offset has to be located by scanning:
+After decrypting, the layout resembles the old wxapkg but there is **no `0xBE` magic header and no
+trustworthy `indexInfoLength`**, so the index offset has to be located by scanning:
 
 ```
-index (offset 1047 in this bundle):
-    [4B name length][UTF-8 path][4B offset][4B size]  × file count
-data: immediately follows the index
+decrypted buffer (407,840 bytes here = 407,846 − 6):
+
+    offset 0 .. 1046       other content (~1 KB, not the index)
+    offset 1047 .. 1758    index:
+                           [4B name length][UTF-8 path][4B offset][4B size] × 19
+    offset 1759 .. …       other blocks (here a chunk starting with PNG magic 89 50 4E 47)
+    offset 90088 ..        the actual file contents (incl. /app-service.js)
 ```
 
-**Key difference: offsets are absolute within the buffer**, not relative to the data section.
+**Key difference: offsets are absolute within the buffer**, not relative to a data section.
+To extract a file just do `buf[offset : offset+size]` — do not add or subtract any base.
+
+Verified: the 19 offsets are contiguous (`90088+147606 = 237694` → … → last ends at 407,839), and
+`buf[90088:90088+147606]` is **byte-identical** to `miniprogram/app-service.js` in this repo.
+
+> Index offset 1047 only holds for this particular bundle. `tools/wxapkg_unpack.py` scans the
+> whole buffer for the longest run of consecutive index entries instead, so it also works on
+> other versions.
 
 ### File manifest (19 entries)
 
@@ -100,11 +112,24 @@ data: immediately follows the index
 ### Unpacking
 
 `tools/wxapkg_unpack.py` handles the legacy `0xBE` format, the PC-encrypted variant
-(`--appid`) and the `V1MMWX` layout, with keyword search built in:
+(`--appid`) and the `V1MMWX` layout. Pure local, no third-party deps, keyword search built in:
 
 ```bash
-python tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --grep 2b12 DB0402
+# self-test (builds fake bundles of all three formats and parses them back)
+python3 tools/wxapkg_unpack.py --selftest
+
+# list the 19 files in the bundled bundle
+python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --list
+
+# unpack and grep (writes to tools/unpacked/)
+python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --grep 2b12 DB0402
+
+# if the index cannot be located, treat the whole decrypted buffer as one blob
+python3 tools/wxapkg_unpack.py -f miniprogram/QUANGE-WY020702__APP__.wxapkg --raw --grep DB0808
 ```
+
+Measured: the bundled 407,846-byte package is detected as `V1MMWX` and unpacks into 19 files in
+0.2 s, with `app-service.js` byte-identical to `miniprogram/app-service.js`.
 
 ---
 

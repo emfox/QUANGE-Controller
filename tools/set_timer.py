@@ -1,28 +1,46 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-set_timer.py —— 直接给全格杯架写定时（协议见 PROTOCOL.md）
+set_timer.py —— 直接给全格智能杀菌牙刷杯架（WY020702）写定时
+
+协议全文见 ../docs/protocol.zh-CN.md（英文：../docs/protocol.en.md）
 
 用法:
     # 先验证通道：发"立即开启"，看指示灯是否开始呼吸
-    python set_timer.py --start
+    python3 set_timer.py --start
 
     # 设成 每天 03:00 消杀 5 分钟（只保留这一条）
-    python set_timer.py --at 03:00 --dur 5
+    python3 set_timer.py --at 03:00 --dur 5
 
     # 两条定时：03:00 五分钟 + 15:30 四分钟
-    python set_timer.py --at "03:00=5,15:30=4"
+    python3 set_timer.py --at "03:00=5,15:30=4"
 
     # 查询状态（看设备回包与下次杀菌时间）
-    python set_timer.py --query
+    python3 set_timer.py --query
 
-    # 只看将要发送的帧，不真发
-    python set_timer.py --at 03:00 --dur 5 --dry-run
+    # 读取设备上的定时列表（会先对时 + 日志查询，再发 DB 01 07）
+    python3 set_timer.py --list
+
+    # 读取消杀历史
+    python3 set_timer.py --logs
+
+    # 只看将要发送的帧，不真发、不连设备
+    python3 set_timer.py --at 03:00 --dur 5 --dry-run
+
+    # 广播名扫不到时，直接指定 MAC
+    python3 set_timer.py -a AA:BB:CC:DD:EE:FF --query
+
+设备名匹配:
+    默认同时认 QUANGE / Hi- / kHID 三个前缀（与 phone.html 一致）。
+    也可用 -n 指定，多个前缀用 | 分隔，例如 -n "kHID" 或 -n "QUANGE|Hi-"。
 
 帧格式:
     设定时  DB 08 08 <count> [HH MM 0D] * count
+    删除    DB 00 08 <剩余条数> [要保留的项] * 剩余条数
     开/关   DB 02 04 01 / DB 02 04 00
     查状态  DB 04 02 <unix秒,4字节>
+    查日志  DB 01 05（流式，每条需回 DB 06 06 01 + 起始时间戳）
+    读列表  DB 01 07（需先发 DB 04 02 和 DB 01 05，单独发设备不回）
 """
 import argparse
 import asyncio
@@ -54,11 +72,37 @@ LOG_Q = None  # asyncio.Queue，存放收到的 BD0805/BD0806 原始字节
 
 # ---------------- 帧构造 ----------------
 
+MAX_ITEMS = 4  # 原厂 FA 里写的条数上限，代码里没有硬约束，按此设计最稳
+
+
 def timer_frame(items):
     """items: [(hour, minute, duration), ...] -> 完整帧 bytes"""
     body = "".join(f"{h:02X}{m:02X}0{d}" for h, m, d in items)
     frame = f"DB0808{len(items):02X}" + body
     return bytes.fromhex(frame)
+
+
+def validate(items):
+    """与 phone.html / 小程序 @addtime 保持一致的前端校验
+
+    原厂判定用的是「间隔 ±59 分钟」，即 >= 59 分钟就放行（不是严格 > 60）；
+    另外所有定时都要落在首个定时的 23 小时（1380 分钟）以内。
+    这些都是前端校验，固件是否也拦没有实测。
+    """
+    if not items:
+        raise SystemExit("[x] 至少需要一条定时")
+    if len(items) > MAX_ITEMS:
+        log(f"[!] 超过原厂约定的 {MAX_ITEMS} 条（代码未硬性限制，照发）")
+
+    mins = sorted(h * 60 + m for h, m, _ in items)
+    for i, cur in enumerate(mins):
+        nxt = mins[i + 1] if i + 1 < len(mins) else mins[0] + 1440
+        if nxt - cur < 59:
+            raise SystemExit(
+                f"[x] 两条定时间隔不能小于 1 小时（原厂限制）："
+                f"{cur // 60:02d}:{cur % 60:02d} 与 {nxt % 1440 // 60:02d}:{nxt % 60:02d}")
+    if mins[-1] - mins[0] > 1380:
+        raise SystemExit("[x] 所有定时需落在首个定时之后的 23 小时内（原厂限制）")
 
 
 def parse_at(spec):
@@ -157,6 +201,7 @@ async def run(a):
         todo = []
     else:
         items = parse_at(a.at)
+        validate(items)
         todo = [(timer_frame(items),
                  "设定时 " + ", ".join(f"{h:02d}:{m:02d}/{d}分钟" for h, m, d in items))]
 
@@ -272,8 +317,10 @@ def _decode(b: bytes):
 
 def cli():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-n", "--name", default="QUANGE")
-    ap.add_argument("-a", "--address", default=None)
+    ap.add_argument("-n", "--name", default=bx.DEFAULT_NAME_SPEC,
+                    help="广播名前缀，多个用 | 分隔（默认同时认 QUANGE / Hi- / kHID，"
+                         "与 phone.html 一致）")
+    ap.add_argument("-a", "--address", default=None, help="直接指定 MAC，跳过名字匹配")
     ap.add_argument("--at", default=None, help='如 03:00 或 "03:00=5,15:30=4"')
     ap.add_argument("--dur", type=int, default=5, help="消杀时长 3/4/5/6 分钟")
     ap.add_argument("--start", action="store_true", help="立即开启消杀（验证通道）")

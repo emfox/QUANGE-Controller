@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-blectx.py —— 共享的 BLE 上下文工具
+blectx.py —— 共享的 BLE 上下文工具（扫描 / 匹配 / 连接）
+
+被 set_timer.py 引用，不单独运行。
 
 Windows 上的一个硬坑：不能拿一串 MAC 地址去 BleakClient(address)，
 必须先扫描拿到 BLEDevice 对象再连，否则常报
     BleakDeviceNotFoundError: Device with address ... was not found.
 本模块统一处理这件事。
+
+设备名匹配：默认同时认 QUANGE / Hi- / kHID 三个前缀 —— 本设备的广播名
+会在 QUANGE-WY020702 和 kHID 之间来回切，GAP 名又是 Hi-YM01-…，
+只认一个必然会扫不到。这套规则与 phone.html 的 NAME_FILTERS 保持一致。
 """
 import asyncio
 
@@ -37,7 +43,31 @@ def _norm(a: str) -> str:
     return a.replace(":", "").replace("-", "").upper()
 
 
-async def find_device(name=None, address=None, timeout: float = 10.0, quiet=False):
+# 与 phone.html 的 NAME_FILTERS 保持一致，避免「网页能连、脚本连不上」
+DEFAULT_NAME_PREFIXES = ("QUANGE", "Hi-", "kHID")
+DEFAULT_NAME_SPEC = "|".join(DEFAULT_NAME_PREFIXES)
+
+
+def _name_match(nm: str, spec: str) -> bool:
+    """spec 里的 '|' 或 ',' 表示多个可选前缀，只要命中其一就算匹配
+
+    - 默认值 DEFAULT_NAME_SPEC 走前缀匹配（与 Web Bluetooth 的 namePrefix 同义）
+    - 用户显式传的名字走子串匹配，方便只记得半截名字的情况
+    """
+    if not nm:
+        return False
+    low = nm.lower()
+    if spec == DEFAULT_NAME_SPEC:
+        return any(low.startswith(p.lower()) for p in DEFAULT_NAME_PREFIXES)
+    for part in spec.replace(",", "|").split("|"):
+        part = part.strip().lower()
+        if part and part in low:
+            return True
+    return False
+
+
+async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.0,
+                      quiet=False):
     """扫一遍并按 MAC / 名字找设备，返回 (BLEDevice, AdvertisementData) 或 (None, None)"""
     if not quiet:
         print(f"[*] 扫描 {timeout:.0f}s ……")
@@ -50,10 +80,9 @@ async def find_device(name=None, address=None, timeout: float = 10.0, quiet=Fals
             if _norm(addr) == n or _norm(dev.address) == n:
                 hits.append((dev, adv, 0))
     if name:
-        key = name.lower()
         for addr, (dev, adv) in found.items():
             nm = (adv.local_name or dev.name or "")
-            if key in nm.lower():
+            if _name_match(nm, name):
                 hits.append((dev, adv, 1))
 
     if hits:
@@ -65,11 +94,13 @@ async def find_device(name=None, address=None, timeout: float = 10.0, quiet=Fals
         return dev, adv
 
     if not quiet:
-        print("[!] 没找到目标。当前可见设备（按信号强弱）：")
+        print(f"[!] 没找到目标（名字匹配规则：{name!r}）。当前可见设备（按信号强弱）：")
         rows = sorted(found.values(), key=lambda x: -((x[1].rssi if x[1].rssi is not None else -999)))
         for dev, adv in rows[:20]:
             print(f"    {str(adv.rssi):>4}dBm  {adv.local_name or dev.name or '(无名)':26}  {dev.address}")
         print("    —— 若目标不在列表里：确认已长按 3 秒开机；把手机蓝牙关掉避免被占；换新电池。")
+        print("    —— 已知广播名会在 QUANGE-WY020702 和 kHID 之间来回切，")
+        print("       扫不到就再扫一次，或用 -a <MAC> 直接指定地址。")
     return None, None
 
 
