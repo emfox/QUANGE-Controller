@@ -128,8 +128,9 @@ recovered, everything fell into place.
 - **The device stops advertising while connected**: a BLE peripheral halts advertising once a
   central connects, so **only one host can control it at a time**. While your phone is connected
   the PC cannot see it, and vice versa. Press *Disconnect* before switching controllers;
-- Setting a schedule is a whole-list replace, so only one entry is written at a time
-  (device semantics, not a limitation of this project);
+- **The schedule is replaced, not appended**: saving writes your whole edited list over the
+  device's configuration. Up to 4 entries, 3–6 minutes each; to remove one, delete it in the
+  editor and save;
 - The mini program validated "two schedules must be more than one hour apart"; whether the
   firmware enforces this is unverified;
 - Whether the schedule survives a battery swap is untested (it should — it appears to live in
