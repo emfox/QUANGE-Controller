@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-blectx.py —— 共享的 BLE 上下文工具（扫描 / 匹配 / 连接）
+blectx.py - shared BLE context helpers (scan / match / connect)
 
-被 set_timer.py 引用，不单独运行。
+Imported by set_timer.py; not meant to be run on its own.
 
-Windows 上的一个硬坑：不能拿一串 MAC 地址去 BleakClient(address)，
-必须先扫描拿到 BLEDevice 对象再连，否则常报
+One hard gotcha on Windows: you cannot hand a MAC address string to
+BleakClient(address). You must scan first and connect with the BLEDevice object,
+otherwise you often get:
     BleakDeviceNotFoundError: Device with address ... was not found.
-本模块统一处理这件事。
+This module centralises that workaround.
 
-设备名匹配：默认同时认 QUANGE / Hi- / kHID 三个前缀 —— 本设备的广播名
-会在 QUANGE-WY020702 和 kHID 之间来回切，GAP 名又是 Hi-YM01-…，
-只认一个必然会扫不到。这套规则与 phone.html 的 NAME_FILTERS 保持一致。
+Device matching: three name prefixes (QUANGE / Hi- / kHID) plus a fallback on the
+services advertised by the device. `kHID` is the Bluetooth module's factory
+default name, and `Hi-` is the GAP name prefix, so matching only one of them
+inevitably misses the device. The rules mirror NAME_FILTERS in phone.html.
 """
 import asyncio
 
@@ -31,9 +33,9 @@ def hexs(b):
 
 
 async def scan_all(timeout: float = 10.0):
-    """返回 {address: (BLEDevice, AdvertisementData)}"""
+    """Return {address: (BLEDevice, AdvertisementData)}"""
     res = await BleakScanner.discover(timeout=timeout, return_adv=True)
-    # bleak 3.x 保证返回 dict；低版本可能返回 list
+    # bleak 3.x guarantees a dict; older versions may return a list
     if isinstance(res, dict):
         return res
     return {d.address: (d, adv) for d, adv in res}
@@ -43,18 +45,25 @@ def _norm(a: str) -> str:
     return a.replace(":", "").replace("-", "").upper()
 
 
-# 与 phone.html 的 NAME_FILTERS 保持一致，避免「网页能连、脚本连不上」
+# Kept in sync with NAME_FILTERS in phone.html so the web page and the scripts
+# never disagree about what counts as the device.
 DEFAULT_NAME_PREFIXES = ("QUANGE", "Hi-", "kHID")
 DEFAULT_NAME_SPEC = "|".join(DEFAULT_NAME_PREFIXES)
 
-# 设备广播里一定带 0x1812(HID) —— 这是固件行为，与广播名无关，比名字可靠。
-# 原厂小程序就是只按这个服务扫的（conble.js: services:["00001812-..."]）。
+# The device always advertises 0x1812 (HID). That is firmware behaviour and does
+# not depend on the name, which makes it far more reliable than name matching.
+# The vendor mini program scans by this service only
+# (conble.js: services: ["00001812-..."]).
 HID_SERVICE = "00001812-0000-1000-8000-00805f9b34fb"
 BATT_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb"
 
 
 def _uuid_match(adv, want: str) -> bool:
-    """判断广播里是否声明了某个服务（bleak 给的是短 UUID 或全 UUID，都要能对上）"""
+    """Check whether an advertised service list contains `want`.
+
+    bleak may report either a short UUID or a full 128-bit one, so both forms
+    have to match.
+    """
     keys = {want.lower(), want[:8].lower(), want[4:8].lower()}
     for u in (adv.service_uuids or []):
         ul = u.lower()
@@ -64,15 +73,17 @@ def _uuid_match(adv, want: str) -> bool:
 
 
 def _looks_like_device(adv) -> bool:
-    """不看名字，只看广播内容 —— 名字可能被改成任何东西，服务列表不会"""
+    """Match on advertised services only - the name can be changed, the services cannot."""
     return _uuid_match(adv, HID_SERVICE) or _uuid_match(adv, BATT_SERVICE)
 
 
 def _name_match(nm: str, spec: str) -> bool:
-    """spec 里的 '|' 或 ',' 表示多个可选前缀，只要命中其一就算匹配
+    """`|` or `,` in `spec` separates alternatives; any hit counts as a match.
 
-    - 默认值 DEFAULT_NAME_SPEC 走前缀匹配（与 Web Bluetooth 的 namePrefix 同义）
-    - 用户显式传的名字走子串匹配，方便只记得半截名字的情况
+    - The default DEFAULT_NAME_SPEC uses prefix matching, same semantics as
+      Web Bluetooth's namePrefix filter.
+    - A name supplied explicitly by the user uses substring matching, which
+      helps when only part of the name is remembered.
     """
     if not nm:
         return False
@@ -88,13 +99,16 @@ def _name_match(nm: str, spec: str) -> bool:
 
 async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.0,
                       quiet=False):
-    """扫一遍并按 MAC / 名字找设备，返回 (BLEDevice, AdvertisementData) 或 (None, None)
+    """Scan once and locate the device by MAC or name.
 
-    匹配顺序：MAC > 名字前缀 > 广播服务特征（0x1812/0x180F）。
-    最后一档是为了兜住「设备被改成任意广播名」的情况 —— 服务列表改不了。
+    Returns (BLEDevice, AdvertisementData), or (None, None).
+
+    Match order: MAC > name prefix > advertised service (0x1812 / 0x180F). The
+    last tier covers the case where the device advertises under an arbitrary
+    name - the service list cannot be changed.
     """
     if not quiet:
-        print(f"[*] 扫描 {timeout:.0f}s ……")
+        print(f"[*] Scanning for {timeout:.0f}s ...")
     found = await scan_all(timeout)
 
     hits = []
@@ -109,7 +123,8 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
             if _name_match(nm, name):
                 hits.append((dev, adv, 1))
 
-    # 兜底：名字对不上但广播内容像 —— 设备改名后名字匹配会失效，服务列表不会
+    # Fallback: the name did not match but the advertisement looks right.
+    # Name matching breaks once the device is renamed; services do not.
     seen = {id(h[0]) for h in hits}
     for addr, (dev, adv) in found.items():
         if id(dev) in seen:
@@ -121,27 +136,33 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
         hits.sort(key=lambda x: (x[2], -((x[1].rssi if x[1].rssi is not None else -999))))
         dev, adv, how = hits[0]
         if not quiet:
-            tag = {0: "按 MAC", 1: "按名字", 2: "按广播服务"}[how]
-            print(f"[+] 命中 {adv.local_name or dev.name or '(无名)'} @ {dev.address} "
+            tag = {0: "by MAC", 1: "by name", 2: "by advertised service"}[how]
+            print(f"[+] Matched {adv.local_name or dev.name or '(unnamed)'} @ {dev.address} "
                   f"({adv.rssi} dBm, {tag})")
         return dev, adv
 
     if not quiet:
-        print(f"[!] 没找到目标（名字匹配规则：{name!r}）。当前可见设备（按信号强弱）：")
+        print(f"[!] No target found (name rule: {name!r}). Visible devices, strongest first:")
         rows = sorted(found.values(), key=lambda x: -((x[1].rssi if x[1].rssi is not None else -999)))
         for dev, adv in rows[:20]:
-            print(f"    {str(adv.rssi):>4}dBm  {adv.local_name or dev.name or '(无名)':26}  {dev.address}")
-        print("    —— 若目标不在列表里：确认已长按 3 秒开机；把手机蓝牙关掉避免被占；换新电池。")
-        print("    —— 广播名可能是 QUANGE-WY020702，也可能退化成模块默认名 kHID。")
-        print("       已经按 0x1812/0x180F 服务兜底匹配过，仍是空的话用 -a <MAC> 直接指定。")
+            print(f"    {str(adv.rssi):>4}dBm  {adv.local_name or dev.name or '(unnamed)':26}  {dev.address}")
+        print("    -- If the target is missing: make sure it was powered on with a 3 s")
+        print("       long-press; turn off phone Bluetooth so it is not hogging the link;")
+        print("       try fresh batteries.")
+        print("    -- The advertising name may be QUANGE-WY020702, or fall back to the")
+        print("       module default kHID.")
+        print("       Matching already fell back to the 0x1812/0x180F services; if it is")
+        print("       still empty, pass -a <MAC> to address the device directly.")
     return None, None
 
 
 async def connect(name=None, address=None, scan_time=10.0, timeout=20.0,
                   on_disconnect=None, quiet=False, retries=3):
-    """扫描 + 连接（失败自动重试，每次重新扫描拿最新的 BLEDevice）
+    """Scan then connect, retrying on failure.
 
-    弱信号（<-80dBm）时 Windows 的 GATT 服务发现经常超时，重试通常能救回来。
+    Every attempt rescans so the BLEDevice is fresh. With a weak signal (below
+    -80 dBm) Windows frequently times out during GATT discovery, and a retry
+    usually recovers it.
     """
     last_err = None
     for attempt in range(1, retries + 1):
@@ -152,7 +173,7 @@ async def connect(name=None, address=None, scan_time=10.0, timeout=20.0,
             continue
         rssi = adv.rssi if adv.rssi is not None else -999
         if not quiet:
-            print(f"[*] 第 {attempt}/{retries} 次连接 {dev.address} (RSSI {rssi}) ……")
+            print(f"[*] Connect attempt {attempt}/{retries} to {dev.address} (RSSI {rssi}) ...")
         client = BleakClient(dev, timeout=timeout, disconnected_callback=on_disconnect)
         try:
             await client.connect()
@@ -161,7 +182,7 @@ async def connect(name=None, address=None, scan_time=10.0, timeout=20.0,
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
             if not quiet:
-                print(f"[!] 连接失败: {last_err}")
+                print(f"[!] Connection failed: {last_err}")
             try:
                 await client.disconnect()
             except Exception:
@@ -169,14 +190,17 @@ async def connect(name=None, address=None, scan_time=10.0, timeout=20.0,
             await asyncio.sleep(3)
             continue
 
-    print(f"[x] 连接最终失败（{last_err}）")
-    print("    排查：1) 把杯架挪到电脑 30cm 内，信号需 > -70dBm；"
-          "2) 关掉手机蓝牙与小程序；3) 换 3 节新碱性电池；4) 长按关机再长按开机后立刻重试。")
+    print(f"[x] Giving up ({last_err})")
+    print("    Checklist: 1) move the holder within 30 cm of the computer; the signal "
+          "needs to be above -70 dBm;"
+          " 2) turn off phone Bluetooth and the mini program;"
+          " 3) fit three fresh alkaline cells;"
+          " 4) long-press to power off, long-press to power on, then retry immediately.")
     return None
 
 
 def find_char(client, spec: str):
-    """按完整 UUID / 短 UUID / handle 找特征值"""
+    """Locate a characteristic by full UUID, short UUID or handle."""
     s = str(spec).lower().replace("-", "").strip()
     chars = [c for svc in client.services for c in svc.characteristics]
     for c in chars:
@@ -193,7 +217,7 @@ def find_char(client, spec: str):
     for c in chars:
         if c.uuid.lower().replace("-", "").startswith("0000" + short):
             return c
-    # 非标准基址的私有 UUID：直接用原始 UUID 的尾部匹配
+    # Vendor UUIDs on a non-standard base: match the tail of the raw UUID instead.
     for c in chars:
         if c.uuid.lower().replace("-", "").endswith(short):
             return c
@@ -219,9 +243,10 @@ def notifiable(client):
 
 
 async def dump_gatt(client, log=print, listen=0.0, subscribe=True):
-    """枚举并打印整棵 GATT 树，读取可读值，订阅可通知值。
+    """Walk the whole GATT tree, read what is readable and subscribe to notifications.
 
-    返回 dict：{"tree": [...], "writable": [...], "notifiable": [...], "notifications": [...]}
+    Returns a dict:
+    {"tree": [...], "writable": [...], "notifiable": [...], "notifications": [...]}
     """
     notifications = []
 
@@ -232,7 +257,7 @@ async def dump_gatt(client, log=print, listen=0.0, subscribe=True):
 
     tree, readable, writable, notifiable = [], [], [], []
 
-    log("\n--------------- GATT 结构 ---------------")
+    log("\n--------------- GATT tree ---------------")
     for svc in client.services:
         log(f"\n[SERVICE] {svc.uuid}  ({short_uuid(svc.uuid)})")
         for c in svc.characteristics:
@@ -248,35 +273,36 @@ async def dump_gatt(client, log=print, listen=0.0, subscribe=True):
             if "write" in c.properties or "write-without-response" in c.properties:
                 writable.append(c)
 
-    log("\n--------------- 读值 ---------------")
+    log("\n--------------- Readable values ---------------")
     if not readable:
-        log("(无)")
+        log("(none)")
     for c in readable:
         try:
             val = await client.read_gatt_char(c)
             asc = "".join(chr(b) if 32 <= b < 127 else "." for b in val)
             log(f"  {short_uuid(c.uuid):8} h{c.handle:<4} = {hexs(val):58} |{asc}|")
         except Exception as e:
-            log(f"  {short_uuid(c.uuid):8} h{c.handle:<4} 读取失败: {type(e).__name__}: {e}")
+            log(f"  {short_uuid(c.uuid):8} h{c.handle:<4} read failed: {type(e).__name__}: {e}")
 
-    log("\n--------------- 判定 ---------------")
-    log("WRITE  : " + (", ".join(f"{short_uuid(c.uuid)}(h{c.handle})" for c in writable) or "无"))
-    log("NOTIFY : " + (", ".join(f"{short_uuid(c.uuid)}(h{c.handle})" for c in notifiable) or "无"))
+    log("\n--------------- Summary ---------------")
+    log("WRITE  : " + (", ".join(f"{short_uuid(c.uuid)}(h{c.handle})" for c in writable) or "none"))
+    log("NOTIFY : " + (", ".join(f"{short_uuid(c.uuid)}(h{c.handle})" for c in notifiable) or "none"))
     if writable:
-        log("[结论] 可写通道存在 → 可以用 write.py 试探。")
+        log("[result] A writable channel exists, so parameters can be probed.")
     else:
-        log("[结论] 无可写特征值 → 通用 BLE 工具写不了参数。")
+        log("[result] No writable characteristic, so a generic BLE tool cannot set anything.")
 
     if subscribe:
         for c in notifiable:
             try:
                 await client.start_notify(c, on_notify)
-                log(f"[+] 订阅 {short_uuid(c.uuid)}")
+                log(f"[+] Subscribed to {short_uuid(c.uuid)}")
             except Exception as e:
-                log(f"[!] 订阅 {short_uuid(c.uuid)} 失败: {type(e).__name__}: {e}")
+                log(f"[!] Subscribe to {short_uuid(c.uuid)} failed: {type(e).__name__}: {e}")
 
     if notifiable and listen > 0:
-        log(f"\n[*] 监听 {listen:.0f}s —— 现在按机身按键（双击 = 立即杀菌），看是否上报。")
+        log(f"\n[*] Listening for {listen:.0f}s - press the button on the device now "
+            f"(double-press = start sterilizing) and watch for reports.")
         await asyncio.sleep(listen)
 
     return {"tree": tree,
@@ -286,5 +312,6 @@ async def dump_gatt(client, log=print, listen=0.0, subscribe=True):
 
 
 if __name__ == "__main__":
-    print("blectx 工具模块，直接运行会做一次扫描连通性自检：")
+    print("blectx is a library module. Running it directly performs one scan as a "
+          "connectivity self-check:")
     asyncio.run(find_device())
