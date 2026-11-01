@@ -173,9 +173,11 @@ Two counter-intuitive points:
 
 1. **It filters on `0x1812` (HID), not on its own `0xFB`** — meaning the advertisement
    always carries `0x1812`, while `0xFB` only appears after connecting. This also explains
-   the `kHID` name in §6: the module was originally configured as an HID peripheral
-   (selfie remote / keyboard) and the advertising config was never changed when it was
-   repurposed as a sterilizer.
+   the `kHID` name in §6: the upstream vendor reused the firmware configuration of an HID
+   product line (selfie remote / keyboard) and never changed the advertising config when it
+   was repurposed as a sterilizer. **A full GATT dump (2026-11-01) confirms the inference**:
+   the device exposes **no HID service at all** — `0x1812` is only a declaration in the
+   advertisement, and the device does not respond to it.
 2. **The name filter is hardcoded to `"QUANGE-WY020702"`** — in both `getBluetoothDevices`
    and `onBluetoothDeviceFound`:
 
@@ -605,21 +607,31 @@ tuning, sensitivity adjustment, sound toggle — none of these exist in any of t
 The device's entire configurability is **"up to 4 schedules, each = time + 3–6 minute duration"**.
 Nothing else.
 
-### 8.1 Good news: the `kHID` state probably isn't a fault
+### 8.1 `kHID` is leftover from the upstream firmware config
 
-The repo previously said "the advertising name alternates between `QUANGE-WY020702` and `kHID`".
-Having read `conble.js`, here's the more accurate version:
+`kHID` is the module's (Telink/YC) **factory-default advertising name**. The cause is in §3.3:
+the upstream vendor reused the firmware config of an HID product line and never changed the
+advertising setup. The vendor app's "rename device" feature only calls a cloud API and **never
+writes to the device**, so this name can only have been burned in at the factory.
 
-- `kHID` is the module's (Telink/YC) **factory-default advertising name**, suggesting the user
-  config area was reset or never written;
-- But **the `0x1812` service in the advertisement is firmware behaviour** and independent of the
-  name — so even when it advertises as `kHID`, the business service `0xFB` is still there and
-  functionality is unaffected;
-- The vendor app only accepts `QUANGE-WY020702`, so it can't see the device while it's in the
-  `kHID` state — **that's the vendor's bug, not a broken device**.
+Measurement on 2026-11-01 added two facts, one of which overturns what this repo used to say:
 
-Our `phone.html` and `set_timer.py` accept three prefixes plus the HID service, so they connect
-in either state.
+- **The `0x1812` in the advertisement is the same leftover, not a capability.** A full GATT
+  dump shows no HID service — the device advertises a service it does not provide.
+- **The advertising name does change.** Within 40 s the same MAC switched from `kHID` to
+  `QUANGE-WY020702` and then stayed there, with every other advertising field unchanged.
+  **The trigger is unknown.**
+  (An earlier revision asserted, from `conble.js` alone, that "alternating names is a
+  misreading". That correction overshot — the original statement was right.)
+
+So the advertising name and `0x1812` come from the same config block: **neither is a stable
+identifier**. Only the MAC is.
+
+Functionally nothing is broken: the business service `0x000000FB` works normally once
+connected. The real problem is that **the vendor app only accepts `QUANGE-WY020702`**, so it
+cannot see the device in the `kHID` state — **that's the vendor's bug, not a broken device**.
+Our `phone.html` and `set_timer.py` accept three prefixes plus the service fallback, so they
+connect in either state.
 
 ---
 

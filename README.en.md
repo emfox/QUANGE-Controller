@@ -146,18 +146,21 @@ In short: **the bundle must be decrypted; the protocol does not.**
 ## Known limitations
 
 - **The advertising name isn't always `QUANGE-WY020702`**: `kHID` is the Bluetooth module's
-  factory-default name (meaning the user config area was reset), not "the device alternating
-  between two names". The good news is that **functionality is unaffected** — `0x1812` in the
-  advertisement is firmware behaviour, and the business service `0xFB` works normally once
-  connected. The vendor app only accepts `QUANGE-WY020702`, so it actually can't see the device in
+  factory-default name — the upstream vendor reused an HID product line's firmware config and
+  never changed the advertising setup. Measured: the name **does** switch between the two
+  (once within 40 s, then it stayed); the trigger is unknown. Functionality is unaffected — the
+  business service `0xFB` works normally once connected, and the `0x1812` in the advertisement
+  is **only a declaration; the device has no HID service**. The vendor app only accepts
+  `QUANGE-WY020702`, so it actually can't see the device in
   the `kHID` state. This project matches **three name prefixes + the `0x1812`/`0x180F` services**,
-  so a renamed device is still found; failing that, connect by MAC
+  but all of those come from the same config block — **only the MAC is reliable**
   (`-a <MAC>` in the script, *Show all devices* in the web app);
 - **The device stops advertising while connected**: a BLE peripheral halts advertising once a
   central connects, so **only one host can control it at a time**. While your phone is connected
   the PC cannot see it, and vice versa. Press *Disconnect* before switching controllers;
 - **The schedule is replaced, not appended**: saving writes your whole edited list over the
-  device's configuration. Up to 4 entries (per the vendor FAQ, not hard-coded), 3–6 minutes each;
+  device's configuration. Up to 4 entries (a **measured firmware limit** — a fifth is silently
+  dropped), 3–6 minutes each;
   to remove one, delete it in the editor and save;
 - **Spacing constraint**: the vendor front end requires ≥ 59 minutes between entries and all
   entries within 23 hours of the first. The web app and the script enforce the same rules (these

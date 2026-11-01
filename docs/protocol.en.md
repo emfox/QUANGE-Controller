@@ -1,8 +1,8 @@
 # QUANGE WY020702 — Full BLE Protocol
 
 > Reconstructed from the discontinued WeChat mini program *莱枫智能生活*
-> (appid `wx9528fce803d3ba0e`, v18). Every item below was verified against real hardware;
-> see section 8 for the verification log.
+> (appid `wx9528fce803d3ba0e`, v18). Most items have real-hardware evidence (see section 8),
+> but **some remain unverified** — they are collected in section 9, which wins on any conflict.
 
 ---
 
@@ -12,24 +12,31 @@
 | --- | --- |
 | Advertising name | `QUANGE-WY020702` (normal) **or** `kHID` (the module's factory default, see note below) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
-| Advertising payload | Service UUIDs `0x1812` (HID) + `0x180F` (Battery); manufacturer data starts with the MAC prefix |
+| Advertising payload | Service UUIDs `0x1812` (**declared only — the device provides no HID service**) + `0x180F` (battery, real); manufacturer data payload = **last 4 bytes of the MAC**, company ID `0x451C` |
 | SoC | Telink, PnP ID `0x248A:0x6682` |
 | Pairing | **Not required** — no pairing, no bonding, no encryption |
 | Frame encryption | **None** — plaintext hexadecimal |
 | Checksum | **None** — no CRC (OTA excepted) |
 
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
-> product's brand name. Treating it as "the device normally alternates between two names" is a
-> misreading — the likelier explanation is that the user config area was reset, or was never
-> written at the factory.
+> product's brand name. The cause is that the upstream vendor (Hangzhou Laifeng) reused the
+> firmware configuration of an HID product line (selfie remote / keyboard) and **never changed
+> the advertising setup** when repurposing it as a sterilizer. The vendor app's "rename device"
+> feature only calls a cloud API and never writes to the device (see miniprogram doc §8.5), so
+> this name can only have been burned in at the factory.
 >
-> This **does not affect functionality**: `0x1812` in the advertisement is firmware behaviour,
-> independent of the name, and the business service `0xFB` works normally once connected.
+> **`0x1812` in the advertisement is the same leftover, not a capability.** A full GATT dump
+> (2026-11-01) shows **no HID service at all** — only GAP/GATT/DIS/Battery plus `000000FB` and
+> the Telink OTA service. In other words the device advertises a service it does not provide.
+>
+> Practical consequence: **the advertising name and `0x1812` come from the same config block,
+> so neither is a stable identifier.** If the name is rewritten, the `0x1812` declaration may
+> vanish with it (not measured yet — a caution, not a conclusion). **Only the MAC is reliable.**
 >
 > Conversely, **the original mini program only accepts `QUANGE-WY020702`** (hardcoded twice in
 > `conble.js`), so it cannot find the device while it advertises as `kHID` — a bug in the vendor
 > code, not a faulty device. Our `phone.html` / `set_timer.py` accept three prefixes plus the
-> HID service, so they connect in either state.
+> service fallback, so they connect in either state.
 
 > **Do not conflate two things.** "No encryption" here refers to the **BLE frames on the air**.
 > The mini program bundle itself **is** encrypted (a `V1MMWX` container: drop the 6-byte header,
@@ -37,8 +44,9 @@
 > nothing to do with the device protocol.
 > In short: **the bundle must be decrypted; the protocol does not.**
 
-> The private service UUID is **not** present in the advertising payload, so you cannot filter
-> by service when scanning. Filter by name, or list all devices.
+> The private service UUID is **not** present in the advertising payload (it only shows up after
+> connecting), so you cannot filter by the business service. All you have is the name and that
+> leftover `0x1812` declaration — and both travel with the config. See the note above.
 
 ### GATT layout
 
@@ -130,11 +138,21 @@ Examples:
 
 **Multiple entries are verified working**: after writing two entries the device replied
 `BD0D08 030005 0F1E04 FF FF FF FF FF FF 00`, and `DB 01 07` read back the same two.
-The vendor UI allows at most 4, so design for 4.
 
-**Empty slots and the trailing byte**: the `BD0D07` / `BD0D08` payload is a fixed-slot table
-(3 bytes per slot, empty slots are `FF FF FF`) followed by one extra byte (observed `0C` and
-`00`; purpose unknown and not needed when writing). Skip `FF` slots and ignore the last byte.
+**The "4 entries" ceiling is a firmware limit (measured).** Sending five:
+
+```
+sent    DB 08 08 05  02 00 06  08 00 03  0C 00 03  12 00 03  16 00 03
+reply   BD 0D 08     02 00 06  08 00 03  0C 00 03  12 00 03  00
+```
+
+The fifth entry (22:00) is **silently dropped** — no error code, no rejection reply. The reason
+is structural: the `BD0D07` / `BD0D08` payload has **exactly four slots**, so there is nowhere to
+put a fifth (see §4).
+
+**Empty slots and the trailing byte**: the `BD0D07` / `BD0D08` payload is **exactly four fixed
+slots** (3 bytes per slot, empty slots are `FF FF FF`) followed by one extra byte (observed `0C`
+and `00`; purpose unknown and not needed when writing). Skip `FF` slots and ignore the last byte.
 
 > Because the semantics are a whole-table replace, **you never need to read the current list
 > first** — just write the list you want.
@@ -166,8 +184,8 @@ Include only the entries you want to keep, never the ones you want to delete.
 
 ## 4. Schedule slot encoding
 
-The device stores the schedule in fixed-size slots of 3 bytes. Empty slots are padded with
-`FF FF FF`.
+The device stores the schedule in fixed-size slots of 3 bytes, **exactly four of them**. Empty
+slots are padded with `FF FF FF`.
 
 Example reply for a single 03:00/5min entry:
 
@@ -176,12 +194,8 @@ BD 0D 08 | 03 00 05 | FF FF FF FF FF FF FF FF FF | 0C
                         └── three empty slots (9 bytes)
 ```
 
-**Two** entries were written and read back successfully.
-
-**About the "4 entries" limit**: it comes from the FAQ text on the mini program's `problem`
-page ("…at most four, at least one"), and **is not hard-coded anywhere in the code** — so it is
-a vendor product convention, not necessarily a firmware limit. Designing for 4 is safest, but
-nothing in the code will stop you from trying a fifth.
+**Two** entries were written and read back successfully. With four slots, **a fifth entry is
+silently dropped** (measured, see §3.3) — so 4 is a firmware limit, not a UI convention.
 
 ---
 
@@ -343,7 +357,9 @@ Three steps are enough to change the schedule:
 # 1. connect over BLE
 #    the advertising name may be QUANGE-WY020702, or the module default kHID (GAP name starts Hi-)
 #    -- accept all three prefixes, or just connect by MAC. Do not hard-code "QUANGE" only.
-#    Also: the device advertises 0x1812 (HID), which is more reliable to scan for than a name.
+#    Also: the device advertises 0x1812, but that comes from the same config block as the name
+#    (the device has no HID service at all) — it may vanish if the name is rewritten. Not a
+#    stable identifier; the MAC is.
 # 2. write  DB 08 08 <count> <HH> <MM> <0D>  to 00001001-... (write-without-response)
 # 3. write  DB 04 02 + unix_seconds to the same characteristic, subscribe to 1002 to confirm
 ```
@@ -370,7 +386,7 @@ Note: Windows defaults to MTU 23 → a 20-byte write limit. The longest frame in
 
 ## 8. Verification log
 
-Environment: Windows + Python `bleak`; ~30 cm away, RSSI −55 to −72 dBm.
+### 8.1 2026-10-22 (Windows + `bleak`, ~30 cm away, RSSI −55 to −72 dBm, stable link)
 
 | Step | Sent | Received | Result |
 | --- | --- | --- | --- |
@@ -379,17 +395,32 @@ Environment: Windows + Python `bleak`; ~30 cm away, RSSI −55 to −72 dBm.
 | Confirm state | `DB 04 02 + ts` | `BD0E02 00 ...` | Next run = 2026-10-23 03:00:00 |
 | **Multiple entries** | `DB 08 08 02 03 00 05 0F 1E 04` | `BD0D08 030005 0F1E04 FF×6 00` | Both accepted |
 | **Read back list** | `DB 04 02` → `DB 01 05` → `DB 01 07` | `BD0D07 030005 0F1E04 FF×6 00` | Same two entries, exact match |
-| Firmware version | `DB 01 A4` | `BD06A2 ...` (sample was simplified; full layout unverified) | Parsed as `14` using the mini program's algorithm |
-
-> Note: the `BD 06 A2` version field layout is **not fully verified**. The mini program takes hex
-> `15..16` (high nibble of byte 2) and `17..18` (low nibble of byte 4) and concatenates them into a
-> decimal number, yielding `14` in practice. The old sample `BD06A2` + `"000014"` is only 6 bytes —
-> too short to reach index 17 — so **do not use it as a frame-length reference**. Dump the full
-> `DB 01 A4` reply to settle it. (Full OTA flow: [miniprogram.en.md](miniprogram.en.md) §5.1.)
 | Log query | `DB 04 02` → `DB 01 05` | `BD0805 6AD9F79A 00B4 01 01` | Parsed as "start ts / 180 s / type 1 / end" |
 | Log streaming ack | `DB 06 06 01` + start ts | one record per ack | **Verified**: 20 records, newest first, can keep going back |
 
+### 8.2 2026-11-01 (same unit, farther away — RSSI −87 to −92 dBm, ~1 in 3 connects succeed)
+
+| Step | Sent | Received | Result |
+| --- | --- | --- | --- |
+| Full GATT dump | — (connect and walk only) | 6 services, **no HID service** | `000000FB` and Telink OTA both present; `0x1812` confirmed to be advertisement-only |
+| PnP ID | read `2A50` | `02 8A 24 66 82 01 00` | `VID=0x248A` (Telink), `PID=0x6682`, matches §1 |
+| Battery | read `2A19` | `63` | 99% |
+| Firmware version | `DB 01 A4` | `BD 06 A2 30 30 30 30 31 34` | Payload is **ASCII `"000014"`**, see note |
+| **Five entries** | `DB 08 08 05 02 00 06 08 00 03 0C 00 03 12 00 03 16 00 03` | `BD0D08 020006 080003 0C0003 120003 00` | **Fifth entry silently dropped — firmware caps at 4** |
+| Restore and re-read | `DB 08 08 02 02 00 03 0F 00 05` → `DB 01 07` | `BD0D07 020003 0F0005 FFFFFF FFFFFF 00` | Field-for-field identical to before the test |
+
+> **The `BD 06 A2` payload is an ASCII string**: the 6 bytes `30 30 30 30 31 34` are `"000014"`.
+> The mini program's trick of joining hex `15..16` with `17..18` only yields `14` here because
+> the ASCII digits happen to land on those indices — **the algorithm is wrong, merely lucky**.
+> The correct read is `payload.decode("ascii")`.
+> (Full OTA flow: [miniprogram.en.md](miniprogram.en.md) §5.1.)
+
 Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no binding is involved.
+Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it works fine.
+
+> **A write does not always produce a reply.** The restore write on 2026-11-01 produced no
+> `BD 0D 08`, yet reading back showed the data had in fact been stored. **Always verify by
+> reading back; never trust the absence of a reply.**
 
 ---
 
@@ -409,3 +440,8 @@ Conclusion: writes to `1001` are honoured, replies arrive on `1002`, and no bind
 - Depth limit of the log ring buffer
 - Whether "start" records exist at all (every record observed was `01` = end)
 - Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (observed `0C` and `00`)
+- What makes the advertising name flip between `kHID` and `QUANGE-WY020702`. Measured
+  2026-11-01: it switched once within 40 s and then stayed, with every other advertising field
+  unchanged. **Trigger unknown.**
+- Whether the `0x1812` declaration in the advertisement disappears along with the name
+  (expected to, but not measured)

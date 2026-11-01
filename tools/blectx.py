@@ -50,10 +50,10 @@ def _norm(a: str) -> str:
 DEFAULT_NAME_PREFIXES = ("QUANGE", "Hi-", "kHID")
 DEFAULT_NAME_SPEC = "|".join(DEFAULT_NAME_PREFIXES)
 
-# The device always advertises 0x1812 (HID). That is firmware behaviour and does
-# not depend on the name, which makes it far more reliable than name matching.
-# The vendor mini program scans by this service only
-# (conble.js: services: ["00001812-..."]).
+# The device advertises 0x1812 and 0x180F, but has no HID service at all: 0x1812 is
+# leftover config that arrived together with the kHID name. Handy as a fallback while
+# the name is wrong, but no guarantee - the MAC is the only stable identifier.
+# The vendor mini program scans by 0x1812 only (conble.js).
 HID_SERVICE = "00001812-0000-1000-8000-00805f9b34fb"
 BATT_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb"
 
@@ -73,7 +73,8 @@ def _uuid_match(adv, want: str) -> bool:
 
 
 def _looks_like_device(adv) -> bool:
-    """Match on advertised services only - the name can be changed, the services cannot."""
+    """Match on advertised services only - a weaker signal than it looks (0x1812 is
+    config leftover, see the note above), but still catches arbitrary renames."""
     return _uuid_match(adv, HID_SERVICE) or _uuid_match(adv, BATT_SERVICE)
 
 
@@ -103,9 +104,9 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
 
     Returns (BLEDevice, AdvertisementData), or (None, None).
 
-    Match order: MAC > name prefix > advertised service (0x1812 / 0x180F). The
-    last tier covers the case where the device advertises under an arbitrary
-    name - the service list cannot be changed.
+    Match order: MAC > name prefix > advertised service (0x1812 / 0x180F). The last tier
+    helps when the device advertises under an unexpected name, but it is not a hard
+    guarantee: both the name and 0x1812 come from the same config block.
     """
     if not quiet:
         print(f"[*] Scanning for {timeout:.0f}s ...")
@@ -124,7 +125,8 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
                 hits.append((dev, adv, 1))
 
     # Fallback: the name did not match but the advertisement looks right.
-    # Name matching breaks once the device is renamed; services do not.
+    # Name matching breaks once the device is renamed; this tier usually survives it,
+    # though both come from the same config block.
     seen = {id(h[0]) for h in hits}
     for addr, (dev, adv) in found.items():
         if id(dev) in seen:

@@ -102,7 +102,7 @@
   </div>
   <p class="hint" style="margin:10px 0 0">
     设备开机后的广播名可能是品牌名，也可能是模块默认名 <b>kHID</b>；
-    同时也按广播里的 HID 服务筛选，所以改了名也能找到。列表为空时多等几秒再点一次。
+    同时也按广播里的 0x1812 / 0x180F 服务兜底筛选。列表为空时多等几秒再点一次。
   </p>
 </div>
 
@@ -173,8 +173,9 @@
     { namePrefix: "QUANGE" },
     { namePrefix: "Hi-" },
     { namePrefix: "kHID" },
-    // Advertising the HID service is firmware behaviour and more reliable than the
-    // name - the vendor mini program scans by this service too
+    // 0x1812 is leftover config (the device has no HID service); it helps when the name
+    // is wrong, but it comes from the same config block, so it is not a guarantee.
+    // The vendor mini program scans by 0x1812 too.
     { services: [0x1812] },
     { services: [0x180F] }
   ];
@@ -403,7 +404,7 @@
   // These are front-end checks; whether the firmware also enforces them is unmeasured.
   function validate(list) {
     if (!list.length) return "至少需要一条定时";
-    if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（原厂约定）`;
+    if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（固件上限）`;
     if (list.length === 1) return null;
 
     const mins = list.map(x => x.h * 60 + x.m).sort((a, b) => a - b);

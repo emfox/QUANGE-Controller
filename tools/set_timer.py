@@ -77,8 +77,8 @@ LOG_Q = None  # asyncio.Queue holding raw BD0805/BD0806 payloads as they arrive
 
 # ---------------- frame construction ----------------
 
-# Upper limit quoted in the vendor FAQ. Nothing in the code enforces it, but
-# staying within it is the safest bet.
+# Firmware limit, not a vendor convention: the schedule payload has exactly four
+# slots, and a fifth entry is silently dropped (measured 2026-11-01).
 MAX_ITEMS = 4
 
 
@@ -96,8 +96,9 @@ def validate(items):
     not a strict > 60). In addition, every schedule must fall within 23 hours
     (1380 minutes) of the first one.
 
-    These are front-end checks; whether the firmware also rejects bad values has
-    not been measured.
+    These mirror the mini program's addtime page, which is the only place they exist.
+    Whether the firmware also rejects bad values has not been measured; use --force
+    to bypass these checks and find out.
     """
     if not items:
         raise SystemExit("[x] At least one schedule is required")
@@ -221,7 +222,10 @@ async def run(a):
         todo = []
     else:
         items = parse_at(a.at)
-        validate(items)
+        if a.force:
+            log("[!] --force: front-end validation skipped")
+        else:
+            validate(items)
         todo = [(timer_frame(items),
                  "set schedules " + ", ".join(f"{h:02d}:{m:02d}/{d}min" for h, m, d in items))]
 
@@ -333,15 +337,18 @@ def _decode(b: bytes):
         elif pre in ("BD0805", "BD0806"):
             log("    -> sterilization log record")
         elif pre == "BD06A2":
-            # Version parsing copies the mini program: hex[15:16] + hex[17:18]
-            # as a decimal number. A reply shorter than 9 bytes cannot provide
-            # this, so print the raw hex instead of guessing.
-            if len(s) >= 18:
-                log(f"    -> firmware version (mini program algorithm): "
-                    f"{int(s[15:16] + s[17:18], 16)}  [raw hex: {s}]")
+            # The payload is a plain ASCII string, e.g. 30 30 30 30 31 34 = "000014".
+            # The mini program instead indexes hex[15:16] and hex[17:18], which lands
+            # on the ASCII digits by accident - do not copy that.
+            raw = bytes(b)[3:].rstrip(b"\x00")
+            try:
+                ver = raw.decode("ascii")
+            except UnicodeDecodeError:
+                ver = None
+            if ver and ver.isprintable():
+                log(f"    -> firmware version: {ver}  [raw hex: {s}]")
             else:
-                log(f"    -> firmware reply is only {len(s)//2} bytes, too short to "
-                    f"index  [raw hex: {s}]")
+                log(f"    -> firmware reply is not ASCII  [raw hex: {s}]")
         elif pre == "BD05A1":
             log("    -> low battery warning")
         else:
@@ -375,6 +382,8 @@ def cli():
                     help="connection timeout in seconds")
     ap.add_argument("--dry-run", action="store_true",
                     help="print frames without connecting")
+    ap.add_argument("--force", action="store_true",
+                    help="skip front-end validation, to probe firmware limits")
     args = ap.parse_args()
 
     if args.at and "=" not in args.at:
