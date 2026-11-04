@@ -110,9 +110,9 @@ Full field descriptions, reply parsing and the init sequence:
 | Item | Value |
 | --- | --- |
 | Model | WY020702 |
-| Advertising name | `QUANGE-WY020702` (normal) **or** `kHID` (module factory default; harmless) |
+| Advertising name | `QUANGE-WY020702` **and** `kHID` (both appear alternately; match by MAC for reliability) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
-| SoC | Telink, PnP ID `0x248A:0x6682` |
+| SoC | Telink. **Exact part number unknown** — PnP ID `0x8266` is an SDK default constant and identifies nothing |
 | Power | 3 × AA cells, BLE only, no Wi-Fi |
 | UVC | Seoul Viosys 275 nm |
 | Original app | WeChat mini program *莱枫智能生活* (appid `wx9528fce803d3ba0e`, offline) |
@@ -163,8 +163,10 @@ In short: **the bundle must be decrypted; the protocol does not.**
   dropped), 3–6 minutes each;
   to remove one, delete it in the editor and save;
 - **Spacing constraint**: the vendor front end requires ≥ 59 minutes between entries and all
-  entries within 23 hours of the first. The web app and the script enforce the same rules (these
-  are front-end checks; whether the firmware also enforces is unverified);
+  entries within 23 hours of the first. **Measured: the firmware checks neither — these are
+  mini program UI rules** (two entries 30 minutes apart were stored verbatim). The web app and
+  script still enforce them **on purpose**, to match the vendor app and prevent configurations
+  the original app could never produce; bypass with `set_timer.py --force`;
 - Whether the schedule survives a battery swap is untested (it should — it appears to live in
   flash);
 - **Usage history is permanently lost**: the history never lives on the device — the mini program

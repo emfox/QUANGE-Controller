@@ -129,8 +129,8 @@
     <button id="btnSave">保存到设备</button>
   </div>
   <p class="hint" style="margin:12px 0 0">
-    最多 4 条，每条 3~6 分钟。保存时整表覆盖，设备上原有定时会被替换。
-    多条之间的间隔需大于 1 小时，且都在首个定时之后 23 小时内（沿用原厂限制）。
+    最多 4 条（设备固件硬上限，多出的会被静默丢弃），每条 3~6 分钟。保存时整表覆盖，设备上原有定时会被替换。
+    多条之间的间隔需大于 1 小时，且都在首个定时之后 23 小时内。
   </p>
 </div>
 
@@ -401,20 +401,23 @@
   // Mirrors the validation in the mini program's addtime page (app-service.js):
   // The vendor checks a +/-59 minute gap, so 59 minutes or more passes (not a strict > 60).
   // Every schedule must also fall within 23 hours (1380 minutes) of the first one.
-  // These are front-end checks; whether the firmware also enforces them is unmeasured.
+  //
+  // Measured on real hardware: the firmware enforces NEITHER rule — two entries 30 minutes
+  // apart are stored verbatim. Both are purely mini program UI rules, kept here on purpose
+  // so the page behaves like the vendor app. MAX_ITEMS, by contrast, IS a firmware limit.
   function validate(list) {
     if (!list.length) return "至少需要一条定时";
-    if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（固件上限）`;
+    if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（固件上限，多出的会被丢弃）`;
     if (list.length === 1) return null;
 
     const mins = list.map(x => x.h * 60 + x.m).sort((a, b) => a - b);
     for (let i = 0; i < mins.length; i++) {
       const next = (i + 1 < mins.length) ? mins[i + 1] : mins[0] + 1440;
-      if (next - mins[i] < 59) return "两条定时的间隔不能小于 1 小时（原厂限制）";
+      if (next - mins[i] < 59) return "两条定时的间隔不能小于 1 小时";
     }
     // Span from the first to the last schedule, allowing for crossing midnight
     const span = mins[mins.length - 1] - mins[0];
-    if (span > 1380) return "所有定时需分布在首个定时之后的 23 小时内（原厂限制）";
+    if (span > 1380) return "所有定时需分布在首个定时之后的 23 小时内";
     return null;
   }
 

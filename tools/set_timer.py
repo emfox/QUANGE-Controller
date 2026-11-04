@@ -97,24 +97,27 @@ def validate(items):
     (1380 minutes) of the first one.
 
     These mirror the mini program's addtime page, which is the only place they exist.
-    Whether the firmware also rejects bad values has not been measured; use --force
-    to bypass these checks and find out.
+    Measured on real hardware: the firmware enforces NEITHER the 59-minute spacing NOR the
+    23-hour window - two entries 30 minutes apart are stored verbatim. The rules are kept
+    here on purpose so the CLI behaves like the vendor app. Use --force to bypass them.
     """
     if not items:
         raise SystemExit("[x] At least one schedule is required")
     if len(items) > MAX_ITEMS:
-        log(f"[!] More than the vendor's {MAX_ITEMS} entries (not enforced in code, sending anyway)")
+        log(f"[!] {len(items)} entries given: the firmware keeps only the first {MAX_ITEMS} "
+            f"and silently drops the rest (measured, no error returned)")
 
     mins = sorted(h * 60 + m for h, m, _ in items)
     for i, cur in enumerate(mins):
         nxt = mins[i + 1] if i + 1 < len(mins) else mins[0] + 1440
         if nxt - cur < 59:
             raise SystemExit(
-                f"[x] Two schedules must be at least 1 hour apart (vendor limit): "
+                f"[x] Two schedules must be at least 1 hour apart (vendor UI rule, "
+                f"not a firmware limit; --force overrides): "
                 f"{cur // 60:02d}:{cur % 60:02d} and {nxt % 1440 // 60:02d}:{nxt % 60:02d}")
     if mins[-1] - mins[0] > 1380:
         raise SystemExit("[x] All schedules must fall within 23 hours of the first one "
-                         "(vendor limit)")
+                         "(vendor UI rule, not a firmware limit; --force overrides)")
 
 
 def parse_at(spec):

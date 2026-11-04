@@ -13,10 +13,36 @@
 | Advertising name | `QUANGE-WY020702` (normal) **or** `kHID` (the module's factory default, see note below) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | Advertising payload | Service UUIDs `0x1812` (**declared only — the device provides no HID service**) + `0x180F` (battery, real); manufacturer data payload = **last 4 bytes of the MAC**, company ID `0x451C` |
-| SoC | Telink, PnP ID `0x248A:0x6682` |
+| SoC | Telink. **Exact part number unknown** — see note below |
 | Pairing | **Not required** — no pairing, no bonding, no encryption |
 | Frame encryption | **None** — plaintext hexadecimal |
 | Checksum | **None** — no CRC (OTA excepted) |
+
+> **About the chip: the PnP ID cannot identify it**
+>
+> Reading `2A50` (PnP ID) returns `02 8A 24 66 82 01 00`, which decodes little-endian as:
+>
+> ```
+> vendor_source = 0x02
+> VID           = 0x248A   (Telink)
+> PID           = 0x8266
+> ver           = 0x0001
+> ```
+>
+> ⚠️ **Earlier versions of this file listed the PID as `0x6682`, which swapped the two bytes
+> `66 82`. Corrected.**
+>
+> But **even read correctly, `0x8266` does not identify the chip**. Source-level inspection shows
+> it is a hardcoded array in the Telink BLE SDK reference design — every Telink device using the
+> default configuration reports exactly the same bytes:
+>
+> ```c
+> u8 my_PnPtrs[] = {0x02, 0x8a, 0x24, 0x66, 0x82, 0x01, 0x00};   // SDK default
+> ```
+>
+> So the PID field reflects **the SDK default compiled into the firmware**, not the physical
+> package. **The chip cannot be identified at the BLE layer at all — only by reading the
+> silkscreen after disassembly.**
 
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
 > product's brand name. The cause is that the upstream vendor (Hangzhou Laifeng) reused the
@@ -403,11 +429,30 @@ Note: Windows defaults to MTU 23 → a 20-byte write limit. The longest frame in
 | Step | Sent | Received | Result |
 | --- | --- | --- | --- |
 | Full GATT dump | — (connect and walk only) | 6 services, **no HID service** | `000000FB` and Telink OTA both present; `0x1812` confirmed to be advertisement-only |
-| PnP ID | read `2A50` | `02 8A 24 66 82 01 00` | `VID=0x248A` (Telink), `PID=0x6682`, matches §1 |
+| PnP ID | read `2A50` | `02 8A 24 66 82 01 00` | `VID=0x248A` (Telink), **`PID=0x8266`** (little-endian). ⚠️ This is an SDK default constant and **does not identify the chip**, see §1 |
 | Battery | read `2A19` | `63` | 99% |
 | Firmware version | `DB 01 A4` | `BD 06 A2 30 30 30 30 31 34` | Payload is **ASCII `"000014"`**, see note |
 | **Five entries** | `DB 08 08 05 02 00 06 08 00 03 0C 00 03 12 00 03 16 00 03` | `BD0D08 020006 080003 0C0003 120003 00` | **Fifth entry silently dropped — firmware caps at 4** |
+| **30-minute gap** | `DB 08 08 02 02 00 06 02 1E 03` | `BD0D07 020006 021E03 FFFFFF FFFFFF 00` | **Firmware does not check spacing** — both stored verbatim (see note) |
+| **Duration honoured** | set `15:00 / 5min`, wait for it to run | log `BD 08 05 6AE2EEF0 012C 00 01` | `0x012C` = **300 s**, matching 5 min (see note) |
 | Restore and re-read | `DB 08 08 02 02 00 03 0F 00 05` → `DB 01 07` | `BD0D07 020003 0F0005 FFFFFF FFFFFF 00` | Field-for-field identical to before the test |
+
+> **The spacing rule exists only in the mini program's UI (measured).**
+> The second row writes two entries **30 minutes** apart — far below the 59-minute UI minimum —
+> and the device stores them verbatim. Combined with the `±59` and `1380` checks in
+> `app-service.js`, this settles it: **both the "≥59 minutes" rule and the "23-hour window" are
+> front-end-only; the firmware does not check either.**
+> `set_timer.py` / `phone.html` still enforce them **on purpose**, to stay consistent with the
+> vendor app and prevent configurations the original app could never produce. Use `--force` to
+> bypass.
+
+> **The duration byte `0D` does take effect (measured).** Log record
+> `BD 08 05 6A E2 EE F0 01 2C 00 01`: timestamp `0x6AE2EEF0` = 2026-10-29 15:00:00,
+> duration `0x012C` = 300 s — exactly the `15:00 / 5min` entry. **The device honours it.**
+
+> **The log `type` field distinguishes the trigger (measured)**: `type 0` records have on-the-hour
+> timestamps (02:00:00 / 15:00:00) = **scheduled**; `type 1` has arbitrary moments (e.g. 19:09:09)
+> = **manual / button triggered**.
 
 > **The `BD 06 A2` payload is an ASCII string**: the 6 bytes `30 30 30 30 31 34` are `"000014"`.
 > The mini program's trick of joining hex `15..16` with `17..18` only yields `14` here because
@@ -426,22 +471,31 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 
 ## 9. Unverified
 
-- Whether "two schedules must be ≥ 1 hour apart" is enforced by the firmware or only by the UI.
-  **The UI logic is now fully traced** (`app-service.js` @addtime): the comparison uses `±59`
-  rather than `±60`, so the actual pass condition is **spacing ≥ 59 minutes** (not strictly
-  > 60); there is also an extra `r - a[0].min <= 1380` (23 h) constraint, i.e. every entry must
-  fall within 23 hours of the first one. These are **all front-end checks**; whether the
-  firmware also rejects is untested.
-- **Whether the duration byte (`0D`) actually takes effect** — every historical log entry shows
-  180 s, while the current schedule asks for 5 minutes; read the log again after the next
-  scheduled run to find out. (The leading `0` in `0D` is hard-coded by the mini program — see
-  §3.3 — that part is settled. What is unconfirmed is whether the device honours the duration.)
+> Items settled on real hardware are no longer listed here — see §8.2.
+> Only genuinely open questions remain.
+
+- **Why `DB 04 02` gets no reply** — sent standalone and mid-sequence, **never answered** in any
+  measurement. The `BD0E02` recorded in §8.1 came from an earlier session and was never
+  reproduced. To investigate: is MTU 23 the cause? Does subscribing to `2A19` matter? Or does this
+  firmware version simply not reply?
+- **Do button presses / the body radar produce BLE notifications?** — two listening sessions
+  (90 s / 200 s) produced **zero notifications**. (In one of them the user accidentally
+  long-pressed and powered the device off; it was silent for ~2.5 min and then recovered, with no
+  new log record.)
+- **Loses the 3 most recent log records after a power cycle** — anomalous, unexplained. Before the
+  power cycle the newest four were `10-29 15:00 / 10-29 02:00 / 10-28 15:00 / 10-28 02:00`; after
+  power-up the newest became `10-28 02:00`. Not flushed from RAM? Different read start point?
+  **No evidence — no conclusion.**
 - Whether the schedule survives a battery swap (it should)
 - Depth limit of the log ring buffer
 - Whether "start" records exist at all (every record observed was `01` = end)
-- Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (observed `0C` and `00`)
+- Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (`00` throughout this round;
+  `0C` in earlier records)
+- Whether the leading `0` in the duration byte `0D` is a fixed prefix or a length/type marker
+- Full field layout of `BD0D07`
 - What makes the advertising name flip between `kHID` and `QUANGE-WY020702`. Measured
   2026-11-01: it switched once within 40 s and then stayed, with every other advertising field
   unchanged. **Trigger unknown.**
 - Whether the `0x1812` declaration in the advertisement disappears along with the name
   (expected to, but not measured)
+- **Exact Telink part number** — undeterminable at the BLE layer (see §1); needs the silkscreen
