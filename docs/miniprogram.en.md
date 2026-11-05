@@ -85,7 +85,7 @@ Verified: the 19 offsets are contiguous (`90088+147606 = 237694` → … → las
 > whole buffer for the longest run of consecutive index entries instead, so it also works on
 > other versions.
 
-### File manifest (19 entries)
+### 2.1 File manifest (19 entries)
 
 | Offset | Size | Path |
 | --- | --- | --- |
@@ -109,7 +109,7 @@ Verified: the 19 offsets are contiguous (`90088+147606 = 237694` → … → las
 | 245126 | 461 | `/pages/timing/timing.html` ← **schedule list** |
 | 245587 | 162252 | `/page-frame.html` ← WebView renderer |
 
-### Unpacking
+### 2.2 Unpacking
 
 `tools/wxapkg_unpack.py` handles the legacy `0xBE` format, the PC-encrypted variant
 (`--appid`) and the `V1MMWX` layout. Pure local, no third-party deps, keyword search built in:
@@ -135,7 +135,9 @@ Measured: the bundled 407,846-byte package is detected as `V1MMWX` and unpacks i
 
 ## 3. Structure
 
-13 pages + 5 components. All logic lives in `app-service.js`.
+### 3.1 Pages
+
+12 pages + 5 components (17 `.html` files inside the bundle). All logic lives in `app-service.js`.
 
 | Page | Purpose |
 | --- | --- |
@@ -154,6 +156,37 @@ Measured: the bundled 407,846-byte package is detected as `V1MMWX` and unpacks i
 The components `blepop` / `inputPop` / `navbar` / `popup` / `timepop` are pure UI shells.
 `timepop` hardcodes durations `[3,4,5,6,7,8,9,10]`, while `addtime` and `edittiming` each
 narrow it to `[3,4,5,6]` — so in practice you can only pick **3–6 minutes**.
+
+### 3.2 Key code locations (`app-service.js`)
+
+| Feature | Search for |
+| --- | --- |
+| Scan / connect | `createBLEConnection`, `getBLEDeviceServices` |
+| Write a frame | `writeBle(`, characteristic `00001001-0000-1000-8000-00805F9B34FB` |
+| Receive replies | `onBLECharacteristicValueChange` |
+| Create schedule | `"DB08080"+t.data.len+t.data.listvalue+e+n+o` |
+| Edit schedule | `"DB08080"+(this.data.listLen+1)+a.join("")` |
+| Delete schedule | `"DB00080"+this.data.listLen+a.join("")` |
+| Start / stop | `"DB020401"` / `"DB020400"` |
+| Query state | `"DB0402"+(e/1e3).toString(16)` |
+| Reply dispatch | the `if("bd0d07"==a)` chain over the `resStr` prefix |
+| Unbind | `reset_device` → `writeBle("DB01A0")` |
+| OTA | `query_update_soft` + `CRC16S` chunking |
+
+The original frame assembly (`addtime.js`):
+
+```js
+l = "0" + Number(t.data.timing).toString(16);          // duration 3~6 -> "03".."06"
+e = Number(t.data.value[0]) < 16 ? "0" + ... : ...;     // hours
+n = Number(t.data.value[1]) < 16 ? "0" + ... : ...;     // minutes
+o = l;
+var s = "DB08080" + t.data.len + t.data.listvalue + e + n + o;
+```
+
+Note that `"DB08080"` is only 7 hex characters, so its trailing `0` merges with `len` into a
+single byte — with `len=2` you get `DB 08 08 02 …`, i.e. the low nibble carries the count.
+`edittiming.js` does the same thing with `"DB08080"+(listLen+1)+a.join("")`. **There is no
+"append" frame and no "replace" frame — every save rewrites the whole table.**
 
 ### 3.3 The scan uses the HID service, not the business service
 
@@ -197,10 +230,16 @@ iOS takes a special branch to recover the MAC from the advertisement:
 )
 ```
 
-It converts `advertisData` to hex, slices it into 2-byte groups, and joins with `:` —
-i.e. **the first 6 bytes of the manufacturer data are the MAC** (matching the advertising
-layout in the appendix). Android just uses the system `deviceId` (already a MAC); iOS has
-to parse it because the OS withholds the MAC.
+It converts `advertisData` to hex, slices it into 2-byte groups, and joins with `:` — anything
+that merely *looks* like a MAC. Android just uses the system `deviceId` (already a MAC); iOS has
+to build one because the OS withholds the MAC.
+
+> ⚠️ **What it builds is not necessarily the real MAC.** Per [protocol §1](protocol.en.md), the
+> manufacturer-data payload is **the last 4 bytes of the MAC** (preceded by company ID `0x451C`),
+> so this iOS branch most likely reconstructs "company ID + last 4 MAC bytes" rather than a full
+> 6-byte MAC. Inside the mini program it is only ever used as an opaque device handle (and still
+> passed through `jiequ`), which is fine for its purpose. **Do not copy this path in your own
+> implementation** — use the MAC or the name.
 
 Results are sorted by RSSI before display. A failed scan reports
 `uploads_user_mobile_info` (with `locationEnabled` / `bluetoothEnabled`) — a vendor
@@ -362,13 +401,13 @@ Single domain: `https://api.sh-lifefun.cn` (dead, connection fails).
 
 ---
 
-## 5.1 Firmware update (OTA)
+### 5.1 Firmware update (OTA)
 
 The mini program **contains a complete OTA implementation**, and it speaks Telink's standard OTA
 service. It **depends entirely on the now-dead backend**, so it cannot run today — the mechanism
 is documented below for the record, and in case a `.bin` ever surfaces.
 
-### 5.1.1 Trigger chain
+#### 5.1.1 Trigger chain
 
 ```
 connect -> send DB 04 02 / DB 01 05 / DB 01 07 / DB 01 A4 in sequence
@@ -391,7 +430,7 @@ connect -> send DB 04 02 / DB 01 05 / DB 01 07 / DB 01 A4 in sequence
 Note `product_code` is hard-coded to **`disinfect_box`** and `soft_type` to `1` — the firmware is
 managed under a "disinfection box" product category in the vendor backend.
 
-### 5.1.2 Version parsing
+#### 5.1.2 Version parsing
 
 ```js
 var s = Number(buf2hex(value).substring(15,16) + buf2hex(value).substring(17,18));
@@ -400,12 +439,17 @@ var s = Number(buf2hex(value).substring(15,16) + buf2hex(value).substring(17,18)
 That is: take the **high nibble of hex byte 2** (`15..16`) and the **low nibble of hex byte 4**
 (`17..18`) and concatenate them. The observed `...000014` yields **14**.
 
-> ⚠️ The previously documented sample `BD06A2` + `"000014"` is only 6 bytes — **too short**
-> (reaching hex index 18 requires at least 9 bytes). The real reply is longer; its full layout has
-> **not been verified**. If you want to implement version reading yourself, dump the whole
-> `DB 01 A4` reply first and decide the parsing from that.
+> ✅ The algorithm **does yield 14, but only by luck**. The real reply is 9 bytes,
+> `BD 06 A2 30 30 30 30 31 34` (18 hex characters), and the payload is the ASCII string
+> `"000014"`. Taking hex `15..16` + `17..18` happens to land on the ASCII digits `'1'` and `'4'`;
+> a different version number would break it.
+>
+> **Correct approach**: `frame[3:].decode("ascii")` → `"000014"` → `14`.
+> `_decode()` in `tools/set_timer.py` already does this (see [protocol §8.2](protocol.en.md)).
+> The previous note here — "the reply is only 6 bytes, layout unverified" — was **wrong**: it
+> mistook 6 ASCII characters for 6 bytes.
 
-### 5.1.3 OTA channel
+#### 5.1.3 OTA channel
 
 | Item | Value |
 | --- | --- |
@@ -420,7 +464,7 @@ That is: take the **high nibble of hex byte 2** (`15..16`) and the **low nibble 
 > device. (Likewise the control channel's write characteristic is taken as `characteristics[1].uuid`
 > — it just happens to be `1001` in practice.)
 
-### 5.1.4 Chunking and state machine
+#### 5.1.4 Chunking and state machine
 
 ```js
 // 1. split into 16-byte blocks
@@ -448,7 +492,7 @@ Key points:
 - block interval is **15 ms**, deliberately conservative;
 - the app **closes the control connection first** (`t.close()`), then waits 2 s before streaming.
 
-### 5.1.5 Can it still be updated?
+#### 5.1.5 Can it still be updated?
 
 **Basically no.** `api.sh-lifefun.cn` is completely gone:
 
@@ -476,7 +520,7 @@ original firmware file**.
 
 ---
 
-## 5.2 Usage history: cloud-only, permanently lost
+### 5.2 Usage history: cloud-only, permanently lost
 
 This was missed earlier but matters a fair bit — **the data behind the `history` page never
 lives on the device**.
@@ -519,10 +563,10 @@ action_type  action type
 1. New sessions are **no longer recorded** — the device's log is a ring buffer that overwrites
    itself once full;
 2. The history charts (day/week/month) are **permanently unavailable**;
-3. `tools/set_timer.py --log` can still **read the records out of the device on the spot**,
+3. `tools/set_timer.py --logs` can still **read the records out of the device on the spot**,
    but there's nowhere to store them and no chart UI.
 
-> If you want an archive, the only option today is to run `--log` periodically and save the
+> If you want an archive, the only option today is to run `--logs` periodically and save the
 > output as text. How many records the device holds and when it wraps isn't visible in
 > `app-service.js` — it needs measurement.
 
@@ -587,7 +631,7 @@ the **complete** set of things the vendor app could do:
 | Capability | Command | Implemented here | Notes |
 | --- | --- | --- | --- |
 | Time sync | `DB 04 02` + unix seconds (4B) | ✅ | Sent on every connection; prerequisite for everything |
-| Query state | `DB 04 02` + timestamp | ✅ | Replies `BD 0B 02` / `BD 0E 02` with battery and next run |
+| Query state | `DB 04 02` + timestamp | ⚠️ | Should reply `BD 0B 02` / `BD 0E 02`, but **this firmware never answers**; the schedule is still readable via `DB 01 07`, and battery via the standard `2A19` |
 | Start | `DB 02 04 01` | ✅ | |
 | Stop | `DB 02 04 00` | ✅ | |
 | Read schedules | `DB 01 07` | ✅ | Replies `BD 0D 07` |

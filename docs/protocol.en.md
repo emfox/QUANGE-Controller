@@ -2,7 +2,9 @@
 
 > Reconstructed from the discontinued WeChat mini program *莱枫智能生活*
 > (appid `wx9528fce803d3ba0e`, v18). Most items have real-hardware evidence (see section 8),
-> but **some remain unverified** — they are collected in section 9, which wins on any conflict.
+> but **some remain unverified** — they are collected in section 9.
+> Where the two disagree, **section 8 (measured) wins**; section 9 only lists what has not
+> been tested yet, it is not the authority.
 
 ---
 
@@ -48,7 +50,7 @@
 > product's brand name. The cause is that the upstream vendor (Hangzhou Laifeng) reused the
 > firmware configuration of an HID product line (selfie remote / keyboard) and **never changed
 > the advertising setup** when repurposing it as a sterilizer. The vendor app's "rename device"
-> feature only calls a cloud API and never writes to the device (see miniprogram doc §8.5), so
+> feature only calls a cloud API and never writes to the device (see miniprogram doc §3.7), so
 > this name can only have been burned in at the factory.
 >
 > **`0x1812` in the advertisement is the same leftover, not a capability.** A full GATT dump
@@ -113,10 +115,10 @@ DB | CMD | SUB | [LEN] | [DATA...]
 | --- | --- | --- |
 | Start sterilization now | `DB 02 04 01` | `BD 0B 02` |
 | Stop | `DB 02 04 00` | `BD 0B 02` |
-| Query state | `DB 04 02` + 4-byte unix seconds | `BD 0E 02` / `BD 11 02` / `BD 00 02` / `BD 02 02` |
+| Query state | `DB 04 02` + 4-byte unix seconds | `BD 0E 02` etc. by design (§5.1); **this firmware never replies**, see §9 |
 | **Query schedule** | **`DB 01 07`** | `BD 0D 07` |
 | Query usage log | `DB 01 05` | `BD 08 05` |
-| **Set schedule (whole-list replace)** | `DB 08 08` + `Count` + `[HH MM 0D] × Count` | `BD 0D 08` |
+| **Set schedule (whole-list replace)** | `DB 08 08` + `Count` + `[HH MM 0D] × Count` | `BD 0D 08`, **but it may not reply**; always verify with `DB 01 07` |
 | Delete entries | `DB 00 08` + `Count` + `[HH MM 0D] × Count` | — |
 | Version | `DB 01 A4` | `BD 06 A2` + version field (parsed as `14`, see note below) |
 | Device reset | `DB 01 A0` | — |
@@ -140,8 +142,12 @@ DB 02 04 00     stop
 DB 04 02 | TS (4 bytes big-endian unix seconds)
 ```
 
-The timestamp calibrates the device clock and triggers the state reply.
-**Send this first after every connection.**
+The timestamp calibrates the device clock, and it is the prerequisite for the later
+`DB 01 07` / `DB 01 A4` frames. **Send this first after every connection.**
+
+> ⚠️ On this firmware this frame **never produces a reply** (see §9). Send it anyway: it exists
+> to sync the clock and to unlock the frames that follow, not to get an answer. Never judge
+> whether it worked by looking for a reply.
 
 ### 3.3 Set schedule
 
@@ -258,12 +264,21 @@ All five command words share the same field layout.
 | --- | --- | --- |
 | `0..6` | 6 | Command word |
 | `6..8` | 2 | State: `01` sterilizing / `00` idle |
-| `8..12` | 4 | Sterilization start timestamp (low 32-bit fragment) |
-| `12..16` | 4 | Current timestamp fragment |
+| `8..12` | 4 | Counter A (equals the run's total duration at start; measured `00B4` = 180 s) |
+| `12..16` | 4 | Counter B (increments during a run; starts at `0000`) |
 | `16..18` | 2 | Battery percent (hex, `64` = 100%) |
 | `18..26` | 8 | **Next run, unix timestamp** (only present when idle) |
+| `26..34` | 8 | Current unix timestamp (seen only in the idle sample) |
 
-While sterilizing, remaining seconds = `sub(8,12) - sub(12,16)`.
+While sterilizing, remaining seconds = `sub(8,12) - sub(12,16)`
+(measured `B4 - 0 = 180 s`, matching the 3-minute default).
+
+> **About `8..12` / `12..16`**: these were once documented as "sterilization start timestamp /
+> current timestamp", but that was **only a guess** — each segment holds 4 hex characters
+> (2 bytes), nowhere near a 32-bit unix second value, and it contradicts the annotations on the
+> sample in this same section (`180s` / `elapsed 0`). **Their exact nature is still unconfirmed**;
+> all that is measured is that "total − elapsed" behaves correctly. Good enough for a progress
+> display, but do not treat them as timestamps.
 
 > **Why you cannot blindly read `18..26`:**
 >
@@ -283,16 +298,32 @@ Real sample (start, state `01`):
 
 ```
 BD 0B 02 | 01 | 00 B4 | 00 00 | 64 | 00 05 | EE C0 | 00
-           ↑run   ↑180s  ↑elapsed ↑100%  ↑duration
 ```
+
+| Segment | Value | Meaning |
+| --- | --- | --- |
+| `BD 0B 02` | command word | power/state class reply |
+| `01` | state | sterilizing |
+| `00 B4` | counter A | `0x00B4` = 180 s, i.e. the run's total duration |
+| `00 00` | counter B | 0 s elapsed |
+| `64` | battery | `0x64` = 100% |
+| `00 05 EE C0 00` | unknown | meaning unconfirmed; `0005EEC0` is not a plausible timestamp — **do not read** |
 
 Real sample (idle, schedule set to 03:00):
 
 ```
 BD 0E 02 | 00 | 00 B4 | 00 00 | 64 | 6A DA 5D 30 | 6A D9 F8 82
-           ↑idle                      ↑next run     ↑now
-                                       = 2026-10-23 03:00:00
 ```
+
+| Segment | Value | Meaning |
+| --- | --- | --- |
+| `BD 0E 02` | command word | state class reply |
+| `00` | state | idle |
+| `00 B4` | counter A | 180 s |
+| `00 00` | counter B | 0 s |
+| `64` | battery | 100% |
+| `6A DA 5D 30` | next run | unix seconds → **2026-10-23 03:00:00** |
+| `6A D9 F8 82` | current time | unix seconds → **2026-10-22 19:50:26** (7.2 h before the next run) |
 
 ### 5.2 Schedule list (`BD0D07` / `BD0D08`)
 
@@ -305,8 +336,8 @@ in section 4.
 | --- | --- |
 | `6..14` | Start timestamp (8 hex, unix seconds) |
 | `14..18` | Duration in seconds |
-| `18..20` | Action type |
-| `20..22` | `00` start / `01` end |
+| `18..20` | Trigger: `0` scheduled / `1` manual (see §8.2) |
+| `20..22` | Record type: `00` start / `01` end (always `01` in practice) |
 
 Real sample:
 
@@ -406,7 +437,9 @@ DB 01 07          read the schedule -> replies BD 0D 07
 **Send without acknowledging and you will only ever get the first record.**
 
 Note: Windows defaults to MTU 23 → a 20-byte write limit. The longest frame in this protocol is
-10 bytes, so no chunking is needed; slice by 20 bytes if you extend it.
+**16 bytes** (a 4-entry write, `DB 08 08 04` plus 12 payload bytes, and the 4-slot `BD 0D 07`
+read-back). That still fits in 20 bytes, so **no chunking is needed**; slice it yourself if you
+extend beyond that.
 
 ---
 
@@ -492,7 +525,6 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 - Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (`00` throughout this round;
   `0C` in earlier records)
 - Whether the leading `0` in the duration byte `0D` is a fixed prefix or a length/type marker
-- Full field layout of `BD0D07`
 - What makes the advertising name flip between `kHID` and `QUANGE-WY020702`. Measured
   2026-11-01: it switched once within 40 s and then stayed, with every other advertising field
   unchanged. **Trigger unknown.**

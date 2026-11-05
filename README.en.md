@@ -42,7 +42,9 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # twice a day
 python tools/set_timer.py --query                   # read state + next run
 python tools/set_timer.py --start                   # sterilize right now
 python tools/set_timer.py --list                    # read the schedule from the device
-python tools/set_timer.py --version                 # read the firmware version (read-only)
+python tools/set_timer.py --logs                    # read the usage log (read-only)
+python tools/set_timer.py --version                 # read the firmware version
+python tools/set_timer.py --stop                    # stop immediately
 python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not connect
 ```
 
@@ -53,7 +55,6 @@ the web app). If the scan comes up empty, address it directly:
 ```bash
 python tools/set_timer.py -a AA:BB:CC:DD:EE:FF --query
 python tools/set_timer.py -n kHID --query            # match one prefix only
-python tools/set_timer.py --version                  # read firmware version (sends DB 01 A4)
 ```
 
 ---
@@ -92,6 +93,7 @@ Full field descriptions, reply parsing and the init sequence:
 ├── tools/
 │   ├── set_timer.py                  CLI schedule setter (recommended)
 │   ├── blectx.py                     Shared BLE helpers
+│   ├── probe.py                      Read-only diagnostics (scan / listen)
 │   └── wxapkg_unpack.py              wxapkg unpacker (incl. the V1MMWX format)
 ├── miniprogram/
 │   ├── QUANGE-WY020702__APP__.wxapkg Original bundle (archived)
@@ -100,7 +102,8 @@ Full field descriptions, reply parsing and the init sequence:
     ├── protocol.zh-CN.md             协议全文（Chinese）
     ├── protocol.en.md                Protocol (English)
     ├── miniprogram.zh-CN.md          小程序结构与取包方法（Chinese）
-    └── miniprogram.en.md             Mini program internals (English)
+    ├── miniprogram.en.md             Mini program internals (English)
+    └── live-test-2026-10-29.md       Full real-hardware test log (GATT tree, pitfalls)
 ```
 
 ---
@@ -172,7 +175,7 @@ In short: **the bundle must be decrypted; the protocol does not.**
 - **Usage history is permanently lost**: the history never lives on the device — the mini program
   streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`, then reads it back through
   `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
-  are no longer recorded and the day/week/month charts are gone for good. `--log` still reads the
+  are no longer recorded and the day/week/month charts are gone for good. `--logs` still reads the
   records currently on the device, but there's nowhere to keep them.
   See [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
@@ -185,6 +188,10 @@ In short: **the bundle must be decrypted; the protocol does not.**
   `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is
   documented in [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.1, but with no firmware file
   there is nothing to flash (a bad write bricks the unit, with no rollback);
+- **The state reply is unreliable**: state, battery and next-run time all come from the reply to
+  `DB 04 02`, and that frame **repeatedly produced no reply at all** on this firmware (cause
+  unknown). When that happens the status block stays empty, but **reading and writing the schedule
+  is unaffected** (*Read from device* uses `DB 01 07`);
 - The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
 
 ---
