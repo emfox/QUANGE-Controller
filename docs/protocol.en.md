@@ -574,7 +574,7 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 | State frame before subscribing | `DB 04 02` + ts, not subscribed to `1002` | **0 frames** | reply dropped |
 | Subscribe afterwards | subscribe `1002`, wait 6 s | **still 0 frames** | **not buffered, not replayed** |
 | Same frame once subscribed | as above | `BD0E02 00 012C 0000 64 6AEF6720 6AEF3956` | immediate reply; `next run` = `2026-11-08 02:00:00` |
-| Idle listen | — (12 s, nothing sent) | **0 frames** | no unsolicited pushes **while idle** (not tested during a run, see §9) |
+| Idle listen | — (12 s, nothing sent) | **0 frames** | no unsolicited pushes **while idle** (not tested during a run — deliberately dropped, see §9) |
 | Re-query without ack | `DB 01 05` twice, no ack in between | both times `BD0805 00084B70 012C 00 01` | cursor does not move; same record re-sent |
 | Continuous read | `DB 06 06 01` ×42 | 42 records, ending at `0x69CEAEA0` (2026-04-03 02:00) | ring depth **≥ 42** |
 | **Resume across connections** | reconnect, then `DB 01 05` | first record `0x69CD5D20` (2026-04-02 02:00) | **cursor survives disconnection** (see §5.3) |
@@ -599,7 +599,7 @@ was restored and read back after all write cases** (last row).
 | State reply | `DB 04 02` + ts, `1002` already subscribed | `BD0E02 00 00B4 0000 64 6AEF6720 6AEF443F` | `next run` = 11-08 02:00; `6AEF443F` = **device clock 23:31:11**, sync worked |
 | Full log drain | `DB 01 05` → `DB 06 06 01` ×45 | 45 records + `BD0806 FFFFFFFF FFFFFF 00` | **ring depth = 45**; first frame `BD0805`, the rest `BD0806` |
 | Cursor wrap | `DB 01 05` again after the end marker | `BD0805 FFFFFFFF FFFFFF 00` | **no wrap**, stays at the end |
-| Idle listen | — (10 s; another 60 s run) | 0 frames | no unsolicited pushes **while idle** (not tested during a run, see §9) |
+| Idle listen | — (10 s; another 60 s run) | 0 frames | no unsolicited pushes **while idle** (not tested during a run — deliberately dropped, see §9) |
 | **Delete frame** | `DB 00 08 01 020003` | `BD0D08 020003 FF×6 00` | delete frame works (previously only inferred) |
 | Delete, clear all | `DB 00 08 00` | 0 frames here; all-`FF` empty table in the next window | cleared, reply delayed |
 | **Duration bounds** | duration byte `00` / `0F` / `07` | replies `020000` / `02000F` / `020007` | **firmware does not validate duration**; 3–6 min is front-end only |
@@ -630,16 +630,14 @@ was restored and read back after all write cases** (last row).
 > Items settled on real hardware are no longer listed here — see §8.2, §8.3 and §8.4.
 > Only genuinely open questions remain.
 
-- **Do button presses / the body radar produce BLE notifications?** — four pure listening
-  sessions (90 s / 200 s / 12 s / 60 s) produced **zero notifications**. The latest one
-  subscribed to `2a19` + `1002` while the user short-pressed the button and waved in front
-  of the device: still 0 frames in 60 s. ⚠️ **All four ran while the device was idle.** An
-  open hypothesis: **to save power the device only senses the body / button during a
-  sterilization run** (plausible for a UV sterilizer — it must pause when someone approaches).
-  If so, zero idle notifications are expected and **do not justify "the device never pushes"**.
-  **To verify**: trigger a run with `DB 02 04 01`, then listen for notifications during the
-  run while waving / pressing. UV caution: do not look into the lamp or put a hand inside;
-  wave an object 20–30 cm away instead.
+- **Do button presses / the body radar produce BLE notifications?** — **deliberately
+  closed, no longer tracked.** Four pure listening sessions (90 s / 200 s / 12 s / 60 s)
+  produced zero notifications, all while idle; it remains possible that the device only
+  senses the body / button during a run (power saving + UV safety). But **the protocol
+  exposes no control or configuration interface for the button or the radar** — even a
+  positive result could not be used to control anything, and it has no bearing on this
+  project (read/write the schedule, read the log). No further hardware time will be spent
+  on it. The only claim kept: **no unsolicited pushes while idle**.
 - **How many log records a power cut actually loses** — after the 2026-11-07 reboot, the
   class-B counter-style timestamps and the `2026-04-03` record were all gone, the chain
   started at `2026-04-02`, and only one new record appeared. Together with the earlier
