@@ -47,8 +47,9 @@
 > silkscreen after disassembly.**
 
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
-> product's brand name. The cause is that the upstream vendor (Hangzhou Laifeng) reused the
-> firmware configuration of an HID product line (selfie remote / keyboard) and **never changed
+> product's brand name. The cause is that the upstream vendor (**Shanghai Laifeng Household
+> Products Co., Ltd.**, `sh-lifefun.com`; "QUANGE" is its own brand) reused the firmware
+> configuration of an HID product line (selfie remote / keyboard) and **never changed
 > the advertising setup** when repurposing it as a sterilizer. The vendor app's "rename device"
 > feature only calls a cloud API and never writes to the device (see miniprogram doc §3.7), so
 > this name can only have been burned in at the factory.
