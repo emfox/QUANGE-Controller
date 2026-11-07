@@ -107,6 +107,9 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
     Match order: MAC > name prefix > advertised service (0x1812 / 0x180F). The last tier
     helps when the device advertises under an unexpected name, but it is not a hard
     guarantee: both the name and 0x1812 come from the same config block.
+
+    With an explicit `address` the other tiers are disabled — there is no fallback to a
+    different device.
     """
     if not quiet:
         print(f"[*] Scanning for {timeout:.0f}s ...")
@@ -114,25 +117,34 @@ async def find_device(name=DEFAULT_NAME_SPEC, address=None, timeout: float = 10.
 
     hits = []
     if address:
+        # An explicit address is a hard constraint. Falling back to a name or
+        # service match here would silently connect to a *different* device and
+        # send it the frames meant for ours.
         n = _norm(address)
         for addr, (dev, adv) in found.items():
             if _norm(addr) == n or _norm(dev.address) == n:
                 hits.append((dev, adv, 0))
-    if name:
-        for addr, (dev, adv) in found.items():
-            nm = (adv.local_name or dev.name or "")
-            if _name_match(nm, name):
-                hits.append((dev, adv, 1))
+        if not hits:
+            if not quiet:
+                print(f"[!] {address} is not advertising right now; "
+                      f"refusing to fall back to another device")
+            return None, None
+    else:
+        if name:
+            for addr, (dev, adv) in found.items():
+                nm = (adv.local_name or dev.name or "")
+                if _name_match(nm, name):
+                    hits.append((dev, adv, 1))
 
-    # Fallback: the name did not match but the advertisement looks right.
-    # Name matching breaks once the device is renamed; this tier usually survives it,
-    # though both come from the same config block.
-    seen = {id(h[0]) for h in hits}
-    for addr, (dev, adv) in found.items():
-        if id(dev) in seen:
-            continue
-        if _looks_like_device(adv):
-            hits.append((dev, adv, 2))
+        # Fallback: the name did not match but the advertisement looks right.
+        # Name matching breaks once the device is renamed; this tier usually survives
+        # it, though both come from the same config block.
+        seen = {id(h[0]) for h in hits}
+        for addr, (dev, adv) in found.items():
+            if id(dev) in seen:
+                continue
+            if _looks_like_device(adv):
+                hits.append((dev, adv, 2))
 
     if hits:
         hits.sort(key=lambda x: (x[2], -((x[1].rssi if x[1].rssi is not None else -999))))
