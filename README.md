@@ -165,7 +165,8 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
   服务器没了，这条链路彻底断掉 —— 新的记录不会再被保存，日/周/月曲线永久不可用。
   用脚本 `--logs` / `--logs-all` 仍能把设备里的记录读出来，但没地方存。
   设备有**读取游标**：每次从上次停下的地方续读，不是重新从最新一条开始；读到末尾后
-  **只有重新上电才能回到最新**，USB 常供电的设备若读不到记录，长按开关机一次即可，
+  协议手段重置不了，但**下一次定时消杀写入新记录后会自动重新可读**，USB 常供电
+  不必重启；只有想立刻读到完整历史时才需要长按开关机一次，
   见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §5.3；
   云端那一侧见 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.2；
 - **设备名改不了**：`get_device_config` / `update_device_config` 都是云端接口，

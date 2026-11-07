@@ -450,15 +450,21 @@ Corroborating: `DB 01 05` served `0x00084B70`; without acking, a second `DB 01 0
    Tapping twice yields two non-overlapping slices, which looks like "records went missing".
 2. **No ack, no progress**: re-querying without acking returns the same record and can look
    like a hang.
-3. **The cursor does not wrap after `FFFFFFFF` and cannot be reset over the protocol**
-   (measured 2026-11-08). ACK-ing the end marker (`DB 06 06 01 FFFFFFFF`), re-syncing the
-   clock, reading the schedule, and the full init sequence were all tried — every one still
-   returned `BD0805 FFFFFFFF FFFFFF 00`. A further full 180 s run under the real clock left
-   the cursor at the end too.
-   ⟹ **Only a power cycle returns it to the newest record** (2026-11-07 reboot).
-   ⚠️ On a unit converted to permanent USB power, "read logs" will keep returning empty
-   until the device is long-pressed off and on again. That is a side effect of the power
-   mod, **not data loss**.
+3. **The cursor does not wrap immediately after `FFFFFFFF` and cannot be reset over the
+   protocol** (measured 2026-11-08). ACK-ing the end marker (`DB 06 06 01 FFFFFFFF`),
+   re-syncing the clock, reading the schedule, and the full init sequence were all tried —
+   every one still returned `BD0805 FFFFFFFF FFFFFF 00`.
+   **But the log becomes readable again once the next scheduled run writes a record**
+   (measured 07:09 the same day, see §8.5): after the 02:00 scheduled point, a bare
+   `DB 01 05` returned `BD0805 6AEF6720 00B4 00 00` (02:00 / 180 s / scheduled /
+   **start-type**), and the ACK produced `BD0806 FFFFFFFF FFFFFF 00`.
+   ⟹ **A USB-powered unit does not need a power cycle**: wait for the next scheduled
+   point and the new record is readable. Power-cycle only if you want the full history
+   right now.
+   ⚠️ The mechanism is undecided: "new records are appended after the cursor" and "the
+   firmware resets the cursor on a scheduled run" both fit the data. Also, a run started
+   with the `DB 02 04 01` command produced **no new log record** (one A/B comparison) —
+   that was the reason for the earlier wrong "only power-on resets it" conclusion.
 
 > **A power cut really loses records — it is not just a cursor illusion** (observed
 > 2026-11-07, not a controlled comparison). Before the cut the chain contained a set of
@@ -682,14 +688,21 @@ was restored and read back after all write cases** (last row).
 | Fake clock | `DB 04 02` + `0x00000100` | state echoed `00000100`, `next run` = `0x6270` | **the timestamp is the clock; schedules use UTC+8 local HH:MM** |
 | State during a run | `DB 02 04 01` under the fake clock, 6 samples at 30 s | 6/6 replied `BD0E02 01`, `12..16` climbed 30→160 s then reset | **counters = total / elapsed; replies are fine during a run** |
 | Cursor reset attempts | ACK `FFFFFFFF` / re-sync / read table / full sequence | all still returned `FFFFFFFF` | **no protocol reset for the cursor** |
-| Real-clock run | full 209 s run, then read the log | still `BD0805 FFFFFFFF` | **new records do not pull the cursor back; only power-on does** |
+| Real-clock run (command-triggered) | `DB 02 04 01` for 209 s, then read the log | still `BD0805 FFFFFFFF` | **a command-triggered run writes no log**; it says nothing about the cursor |
+| Scheduled point recheck | 07:09, bare `DB 01 05` after the 02:00 run | `BD0805 6AEF6720 00B4 00 00`, then `BD0806 FFFFFFFF` after ACK | **a scheduled run writes a record and the log is readable again** |
 | Advertising name | 60 s scan → connect → 60 s scan | `kHID` was only the first packet of each round (1/121, 1/98), all others `QUANGE-WY020702` | **not an alternation; startup default then fixed** |
 
-> **Cursor vs USB power**: after draining to `FFFFFFFF`, neither protocol commands nor new
-> runs made the log readable again. Schedule reads/writes were unaffected throughout
-> (`BD0D07 020003 0F0005 …`). To read logs again, long-press the device off and on once —
-> **this is not log loss**. At the end of all tests the real unix clock was restored and the
-> schedule remained `02:00/3min + 15:00/5min`.
+> **Cursor vs USB power (corrected 07:09)**: protocol commands really cannot reset the
+> cursor after draining to `FFFFFFFF`, but **no power cycle is needed** — the next scheduled
+> run makes the log readable again. The state reply also confirms the 02:00 run happened:
+> `BD0E02 00 00B4 0000 64 6AF01DF0 6AEFAFB5`, with `next run` advanced to 11-08 15:00,
+> device clock 07:09:41, battery 100%, idle.
+> ⚠️ The previous version of this note ("neither protocol commands nor new runs made the
+> log readable again") was **wrong**: the earlier 209 s run was started with
+> `DB 02 04 01`, and command-triggered runs write no log, which was misread as "even new
+> runs do not wrap the cursor". Schedule reads/writes were unaffected throughout. At the
+> end of all tests the real unix clock was in place and the schedule remained
+> `02:00/3min + 15:00/5min`.
 
 ---
 
@@ -701,12 +714,10 @@ was restored and read back after all write cases** (last row).
 - **Exact Telink part number** — undeterminable at the BLE layer (the PnP ID is an SDK
   default constant, see §1). This unit has been opened for the USB mod, so **reading the
   silkscreen on the main IC settles it**; that is the only route.
-- **Can logs stay readable long-term on USB power?** — known: after draining to `FFFFFFFF`,
-  no protocol command resets the cursor and new runs do not wrap it; only power-on does
-  (§8.5). What is untested is whether the device resets the cursor by itself after several
-  days of new records (e.g. at day rollover or on a scheduled run). That needs long-term
-  observation, not a single experiment. Workaround: **long-press off/on when reads come back
-  empty**.
+- **Do later scheduled points keep the log readable?** — confirmed once (11-08 02:00,
+  see §8.5); USB power needs no long-press restart. What is still missing is a **second
+  and a multi-day** repetition. The next natural scheduled point is 11-08 15:00 — just
+  read the log again then; no dedicated experiment or device change is needed.
 
 **Deliberately closed, no longer tracked** (with reasons, to avoid repeating the work):
 

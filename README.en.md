@@ -183,9 +183,10 @@ In short: **the bundle must be decrypted; the protocol does not.**
   are no longer recorded and the day/week/month charts are gone for good. `--logs` / `--logs-all`
   still read the records currently on the device, but there's nowhere to keep them.
   The device has a **read cursor**: each read resumes where the last one stopped rather than
-  starting from the newest record, and **only a power cycle returns it to the newest** —
-  on a USB-powered unit, long-press off/on once if reads come back empty.
-  See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
+  starting from the newest record. Protocol commands cannot reset it at the end marker,
+  but **the next scheduled run writes a new record and makes the log readable again** —
+  a USB-powered unit needs no restart. Long-press off/on only if you want the full
+  history immediately. See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
   For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never
