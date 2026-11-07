@@ -42,7 +42,8 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # twice a day
 python tools/set_timer.py --query                   # read state + next run
 python tools/set_timer.py --start                   # sterilize right now
 python tools/set_timer.py --list                    # read the schedule from the device
-python tools/set_timer.py --logs                    # read the usage log (read-only)
+python tools/set_timer.py --logs                    # read the usage log (read-only, from the cursor)
+python tools/set_timer.py --logs-all                # drain the log to its end marker
 python tools/set_timer.py --version                 # read the firmware version
 python tools/set_timer.py --stop                    # stop immediately
 python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not connect
@@ -175,9 +176,11 @@ In short: **the bundle must be decrypted; the protocol does not.**
 - **Usage history is permanently lost**: the history never lives on the device — the mini program
   streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`, then reads it back through
   `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
-  are no longer recorded and the day/week/month charts are gone for good. `--logs` still reads the
-  records currently on the device, but there's nowhere to keep them.
-  See [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
+  are no longer recorded and the day/week/month charts are gone for good. `--logs` / `--logs-all`
+  still read the records currently on the device, but there's nowhere to keep them.
+  The device has a **read cursor**: each read resumes where the last one stopped rather than
+  starting from the newest record — see [docs/protocol.en.md](docs/protocol.en.md) §5.3.
+  For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never
   written to the device**. Unavailable now;
@@ -188,10 +191,11 @@ In short: **the bundle must be decrypted; the protocol does not.**
   `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is
   documented in [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.1, but with no firmware file
   there is nothing to flash (a bad write bricks the unit, with no rollback);
-- **The state reply is unreliable**: state, battery and next-run time all come from the reply to
-  `DB 04 02`, and that frame **repeatedly produced no reply at all** on this firmware (cause
-  unknown). When that happens the status block stays empty, but **reading and writing the schedule
-  is unaffected** (*Read from device* uses `DB 01 07`);
+- **The state reply depends on subscription order**: state, battery and next-run time all come
+  from the reply to `DB 04 02`. Measured 2026-11-07: you must **subscribe to `1002` before
+  sending**, otherwise the reply is dropped and not buffered — that was the cause of the older
+  "repeatedly no reply" reports. Both clients here subscribe first and are unaffected
+  (see [docs/protocol.en.md](docs/protocol.en.md) §3.2);
 - The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
 
 ---
@@ -207,3 +211,9 @@ they are included for research and interoperability reference only — not for c
 redistribution.
 
 Sending commands to your hardware is at your own risk.
+
+## License
+
+This project's own code and documentation are [MIT](LICENSE) licensed, © 2026 Emfox Zhou.
+The archived vendor bundle under `miniprogram/` is **not covered** by this license — see the
+disclaimer above.

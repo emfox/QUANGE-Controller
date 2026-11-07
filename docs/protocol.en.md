@@ -146,9 +146,17 @@ DB 04 02 | TS (4 bytes big-endian unix seconds)
 The timestamp calibrates the device clock, and it is the prerequisite for the later
 `DB 01 07` / `DB 01 A4` frames. **Send this first after every connection.**
 
-> ⚠️ On this firmware this frame **never produces a reply** (see §9). Send it anyway: it exists
-> to sync the clock and to unlock the frames that follow, not to get an answer. Never judge
-> whether it worked by looking for a reply.
+> ⚠️ **Subscribe to `1002` before sending this frame.** Measured 2026-11-07:
+>
+> | Condition | Result |
+> | --- | --- |
+> | Sent while not subscribed to `1002` | **no reply**, and **not buffered** — subscribing afterwards does not recover it |
+> | Sent while subscribed | replies immediately with `BD 0E 02 ...` |
+> | Subscribed to `2A19` (battery) first | replies normally either way — `2A19` is irrelevant |
+>
+> The older note "this frame never replies" was an artefact of the ordering above: the reply
+> was dropped because nothing was listening yet. `set_timer.py` and `phone.html` both subscribe
+> before sending and are therefore unaffected; a hand-written client must keep that order.
 
 ### 3.3 Set schedule
 
@@ -368,20 +376,48 @@ only when duration is non-zero, and uploads the batch to its backend once `FFFFF
 > Because it is a stream, sending `DB 01 05` **without** acknowledging only ever yields the
 > first record. The acknowledgement carries the record's *start timestamp*, not a sequence number.
 
-**Verified on real hardware (2026-10-22)**: the ack loop works — 20 records read back to back,
-each one only arriving after the previous was acknowledged.
+#### The read cursor: `DB 01 05` does not rescan from the newest ★
+
+**The device keeps a persistent cursor.** Each `DB 01 05` resumes where the previous read
+stopped, and **it survives disconnection**. The acknowledgement is the only thing that moves
+the cursor — send `DB 01 05` again without acking and the device **re-sends the same record**.
+
+Measured 2026-11-07, three consecutive connections with no sterilization in between:
+
+| Run | Last record acked | First record of the next run |
+| --- | --- | --- |
+| 1 | `0x00023760` (66 h) | `0x00030570` (55 h) — exactly the next one |
+| 2 | `0x69CEAEA0` (2026-04-03 02:00) | `0x69CD5D20` (2026-04-02 02:00) — exactly the next one |
+
+Corroborating: `DB 01 05` served `0x00084B70`; without acking, a second `DB 01 05` returned
+**the same `0x00084B70`**.
+
+⟹ Three consequences for any implementation:
+
+1. **One "read logs" tap returns "the N records after the cursor", not "the newest N".**
+   Tapping twice yields two non-overlapping slices, which looks like "records went missing".
+2. **No ack, no progress**: re-querying without acking returns the same record and can look
+   like a hang.
+3. Whether the cursor wraps after `FFFFFFFF`, and whether a power cycle resets it, is **untested**.
+
+> Inference (**not proven**): the §9 "the newest few records disappear after a power cut"
+> report is probably the cursor moving, not RAM loss. To settle it, read to `FFFFFFFF`, note
+> the total, then power-cycle and count again.
 
 Observed behaviour:
 
-- **Newest first**;
-- The device keeps a **ring buffer** of unknown depth: 20 records were read without reaching
-  the end, and reading further keeps going back in time;
-- Every record describes a **completed** run (status byte always `01`), duration always 180 s
-  in the observed history;
-- Some older records carry timestamps near zero (`00000000`, `0003D4C2`, …), which means the
-  **device clock had been reset** (battery swap without a time sync). Treat those times as
-  unknown — but they **still must be acknowledged**, otherwise the records behind them are
-  unreachable.
+- **Newest first** — only true while the cursor sits at the newest position, see above;
+- The device keeps a **ring buffer** of unknown depth: 42 records were read in a row without
+  reaching the end, the oldest already at 2026-04-03;
+- Every record describes a **completed** run (bytes `20..22` always `01`); durations observed
+  are 180 s and 300 s;
+- Some records carry timestamps near zero (`00000000`, `0003D4C2`, `00030570`, …), which means
+  the **device clock had been reset**. Treat those times as unknown — but they **still must be
+  acknowledged**, otherwise the records behind them are unreachable.
+- A second family of timestamps looks like `0x00030570`: they are **exact multiples of 3600**
+  and alternate **13 h / 11 h** apart, matching the `02:00` and `15:00` schedules. The state
+  reply at the same moment reports a correct wall-clock `next run`, so **the log time base and
+  the scheduling clock are two different things**. Mechanism unknown, see §9.
 
 ### 5.4 Warnings
 
@@ -503,26 +539,51 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 
 ---
 
+### 8.3 2026-11-07 (same unit, RSSI −86 to −95 dBm, fewer than half the connects succeeded)
+
+| Step | Sent | Received | Result |
+| --- | --- | --- | --- |
+| State frame before subscribing | `DB 04 02` + ts, not subscribed to `1002` | **0 frames** | reply dropped |
+| Subscribe afterwards | subscribe `1002`, wait 6 s | **still 0 frames** | **not buffered, not replayed** |
+| Same frame once subscribed | as above | `BD0E02 00 012C 0000 64 6AEF6720 6AEF3956` | immediate reply; `next run` = `2026-11-08 02:00:00` |
+| Idle listen | — (12 s, nothing sent) | **0 frames** | the device never pushes unprompted |
+| Re-query without ack | `DB 01 05` twice, no ack in between | both times `BD0805 00084B70 012C 00 01` | cursor does not move; same record re-sent |
+| Continuous read | `DB 06 06 01` ×42 | 42 records, ending at `0x69CEAEA0` (2026-04-03 02:00) | ring depth **≥ 42** |
+| **Resume across connections** | reconnect, then `DB 01 05` | first record `0x69CD5D20` (2026-04-02 02:00) | **cursor survives disconnection** (see §5.3) |
+
+> **Log time base anomaly (measured, mechanism unknown).** At the same moment:
+> - state reply `next run` = `0x6AEF6720` = **2026-11-08 02:00:00** (correct wall clock)
+> - log timestamps like `0x00030570` = 198 000 s (not wall clock), the whole batch being
+>   **exact multiples of 3600**: `0 h / 7 h / 18 h / 31 h / 42 h / 55 h`, spaced alternately
+>   **13 h / 11 h** — exactly the gap between the `02:00` and `15:00` schedules.
+>
+> All that can be said is "logs and scheduling use two different time bases".
+> **Why, and how to map it back to wall clock, is unknown.**
+
+---
+
 ## 9. Unverified
 
-> Items settled on real hardware are no longer listed here — see §8.2.
+> Items settled on real hardware are no longer listed here — see §8.2 and §8.3.
 > Only genuinely open questions remain.
 
-- **Why `DB 04 02` gets no reply** — sent standalone and mid-sequence, **never answered** in any
-  measurement. The `BD0E02` recorded in §8.1 came from an earlier session and was never
-  reproduced. To investigate: is MTU 23 the cause? Does subscribing to `2A19` matter? Or does this
-  firmware version simply not reply?
 - **Do button presses / the body radar produce BLE notifications?** — two listening sessions
   (90 s / 200 s) produced **zero notifications**. (In one of them the user accidentally
   long-pressed and powered the device off; it was silent for ~2.5 min and then recovered, with no
-  new log record.)
-- **Loses the 3 most recent log records after a power cycle** — anomalous, unexplained. Before the
-  power cycle the newest four were `10-29 15:00 / 10-29 02:00 / 10-28 15:00 / 10-28 02:00`; after
-  power-up the newest became `10-28 02:00`. Not flushed from RAM? Different read start point?
-  **No evidence — no conclusion.**
+  new log record.) A third idle listen on 2026-11-07 (12 s, nothing sent) also saw **0 frames** —
+  the device never pushes unprompted.
+- **"The newest few log records disappear after a power cycle"** — before the cycle the newest
+  four were `10-29 15:00 / 10-29 02:00 / 10-28 15:00 / 10-28 02:00`; after power-up the newest
+  became `10-28 02:00`. **Now a better explanation exists but is unproven**: `DB 01 05` is a
+  persistent cursor (§5.3), so the read start point moves with what was read before — "missing
+  records" may be the cursor having advanced. To settle it: read to `FFFFFFFF`, note the total,
+  power-cycle, count again.
+- **The log time base differs from the scheduling clock** — at the same moment the state reply's
+  `next run` is a correct wall-clock value while log timestamps are small numbers that are exact
+  multiples of 3600, spaced 13 h / 11 h apart. Mechanism unknown.
 - Whether the schedule survives a battery swap (it should)
-- Depth limit of the log ring buffer
-- Whether "start" records exist at all (every record observed was `01` = end)
+- Depth limit of the log ring buffer — **≥ 42** (42 records read on 2026-11-07 without reaching
+  `FFFFFFFF`, the oldest already at 2026-04-03)
 - Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (`00` throughout this round;
   `0C` in earlier records)
 - Whether the leading `0` in the duration byte `0D` is a fixed prefix or a length/type marker

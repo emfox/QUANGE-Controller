@@ -40,7 +40,8 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # 一天两次
 python tools/set_timer.py --query                   # 查状态与下次杀菌时间
 python tools/set_timer.py --start                   # 立即消杀一次
 python tools/set_timer.py --list                    # 读取设备上的定时列表
-python tools/set_timer.py --logs                    # 读取消杀记录（只读）
+python tools/set_timer.py --logs                    # 读取消杀记录（只读，从游标续读）
+python tools/set_timer.py --logs-all                # 一直读到缓冲区末尾
 python tools/set_timer.py --version                 # 读固件版本
 python tools/set_timer.py --stop                    # 立即停止
 python tools/set_timer.py --at 03:00 --dry-run      # 只打印帧，不连接设备
@@ -160,8 +161,10 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 - **消杀历史记录已永久丢失**：历史数据不在设备里，是小程序连上设备后把日志流
   （`BD 08 05`）转存到 `api.sh-lifefun.cn`，再由 `get_device_use_log` 读回来画图。
   服务器没了，这条链路彻底断掉 —— 新的记录不会再被保存，日/周/月曲线永久不可用。
-  用脚本 `--logs` 仍能把设备里当下的记录读出来，但没地方存。
-  详见 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.2；
+  用脚本 `--logs` / `--logs-all` 仍能把设备里的记录读出来，但没地方存。
+  设备有**读取游标**：每次从上次停下的地方续读，不是重新从最新一条开始，
+  见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §5.3；
+  云端那一侧见 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.2；
 - **设备名改不了**：`get_device_config` / `update_device_config` 都是云端接口，
   名字只存服务器和手机本地，**从来没写进设备**。服务器下线后无法修改；
 - **固件升级已不可用**：小程序里的 OTA 实现完整（Telink 标准 OTA + CRC16 分包），
@@ -170,9 +173,9 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
   但没有固件文件就无法刷机（写坏即变砖，无回滚）；
 - `DB 01 A0`（设备复位）**本项目不实现** —— 它在原厂是解绑时发的，可能清掉定时表，
   没有任何非破坏性用途；
-- **状态回包不稳定**：状态、电量、下次杀菌时间都来自 `DB 04 02` 的回包，而这一帧在本机固件上
-  **多次实测无回包**（原因未查明）。遇到这种情况，页面上的状态区会留空，但**定时表读写不受影响**
-  （「从设备读取」走的是 `DB 01 07`）；
+- **状态回包依赖订阅顺序**：状态、电量、下次杀菌时间都来自 `DB 04 02` 的回包。2026-11-07 实测：
+  **必须先订阅 `1002` 再发**，否则回包被直接丢弃且不缓存 —— 这正是过去「多次实测无回包」的原因。
+  本项目两个客户端都是先订阅再发，不受影响（见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §3.2）；
 - 设备广播非常稀疏，连接困难时请把设备靠近、并重新开关机一次。
 
 ---
@@ -185,3 +188,8 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 `miniprogram/` 目录下的文件为原厂小程序产物的存档，版权归原权利人所有，仅供研究与互操作性参考，不得用于商业分发。
 
 使用本项目的指令直接操作硬件，风险自负。
+
+## 许可证
+
+本项目自有的代码与文档采用 [MIT](LICENSE) 许可，版权 © 2026 Emfox Zhou。
+`miniprogram/` 下的原厂小程序存档**不在本许可范围内**，见上方免责声明。

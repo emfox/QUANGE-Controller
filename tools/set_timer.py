@@ -21,8 +21,11 @@ Usage:
     # Read the schedule table off the device (syncs time and log first, then DB 01 07)
     python3 set_timer.py --list
 
-    # Read the sterilization log
+    # Read the sterilization log (continues from the device cursor, see protocol doc 5.3)
     python3 set_timer.py --logs
+
+    # Drain the whole ring buffer up to its end marker
+    python3 set_timer.py --logs-all
 
     # Read the firmware version (DB 01 A4 -> BD 06 A2, read-only, never triggers an update)
     python3 set_timer.py --version
@@ -148,11 +151,15 @@ def status_frame():
 
 # ---------------- main flow ----------------
 
-async def read_logs(client, target, wait=3.0, limit=12):
+async def read_logs(client, target, wait=3.0, limit=20, drain=False):
     """Read the sterilization log.
 
-    The device pushes one record at a time; each must be acknowledged with
-    DB060601 + its start timestamp before the next one is sent.
+    The device keeps a **persistent cursor**: `DB 01 05` resumes wherever the previous
+    read stopped, and the position survives disconnection. A record only advances the
+    cursor once it is acknowledged with DB060601 + its start timestamp.
+
+    So this does not return "the newest N records" - it returns "the N records after the
+    cursor". Pass drain=True to keep going until the FFFFFFFF end marker.
     """
     global LOG_Q
 
@@ -161,6 +168,10 @@ async def read_logs(client, target, wait=3.0, limit=12):
         LOG_Q.get_nowait()
 
     log("=== Reading sterilization log ===")
+    log("    the device has a read cursor: this continues from where the last read")
+    log("    stopped, which is NOT necessarily the newest record (protocol doc 5.3)")
+    if drain:
+        log("    draining until the end marker; this can take a while")
     await client.write_gatt_char(target, status_frame(), response=False)
     log("[TX] time sync")
     await asyncio.sleep(1.0)
@@ -168,17 +179,23 @@ async def read_logs(client, target, wait=3.0, limit=12):
     log("[TX] log query")
 
     rows = []
-    for i in range(limit):
+    misses = 0
+    cap = 500 if drain else limit
+    for i in range(cap):
         try:
             data = await asyncio.wait_for(LOG_Q.get(), timeout=wait)
         except asyncio.TimeoutError:
+            misses += 1
+            if drain and misses < 2:
+                continue
             log(f"    Timed out waiting for record {i+1}; stream finished")
             break
+        misses = 0
 
         s = bytes(data).hex().upper()
         tsh = s[6:14]
         if tsh == "FFFFFFFF":
-            log("    Device reply: no more records")
+            log("    Device reply: no more records (end of the ring buffer)")
             break
         dur = int(s[14:18], 16)
         typ = int(s[18:20], 16)
@@ -219,7 +236,7 @@ async def run(a):
         todo = [(status_frame(), "time sync"),
                 (bytes.fromhex("DB0105"), "log query"),
                 (bytes.fromhex("DB0107"), "read schedule table")]
-    elif a.logs:
+    elif a.logs or a.logs_all:
         todo = []
     else:
         items = parse_at(a.at)
@@ -272,8 +289,8 @@ async def run(a):
             log(f"[x] Characteristic {CHAR} not found")
             return 2
 
-        if a.logs:
-            await read_logs(client, target, wait=3.0, limit=20)
+        if a.logs or a.logs_all:
+            await read_logs(client, target, wait=3.0, limit=20, drain=a.logs_all)
 
         for frame, desc in todo:
             await client.write_gatt_char(target, frame, response=False)
@@ -374,7 +391,11 @@ def cli():
     ap.add_argument("--version", action="store_true",
                     help="read firmware version (DB 01 A4 -> BD 06 A2)")
     ap.add_argument("--list", action="store_true", help="read the schedule table")
-    ap.add_argument("--logs", action="store_true", help="read the sterilization log")
+    ap.add_argument("--logs", action="store_true",
+                    help="read the next 20 log records (the device has a read cursor, "
+                         "so this continues from the last read, not from the newest)")
+    ap.add_argument("--logs-all", action="store_true",
+                    help="read log records until the device reports the end of the buffer")
     ap.add_argument("--listen", type=float, default=6.0,
                     help="seconds to wait for replies")
     ap.add_argument("--scan-time", type=float, default=8.0,
@@ -390,7 +411,7 @@ def cli():
     if args.at and "=" not in args.at:
         args.at = f"{args.at}={args.dur}"
     if not (args.at or args.start or args.stop or args.query or args.version
-            or args.list or args.logs):
+            or args.list or args.logs or args.logs_all):
         ap.print_help()
         return 2
     try:
