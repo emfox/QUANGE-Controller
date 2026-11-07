@@ -76,7 +76,10 @@ frames start with `DB`. The device replies on `00001002-...` with frames startin
 | Delete | `DB 00 08 <remaining count>` + `[entries to KEEP] × remaining count` |
 
 Each schedule entry is 3 bytes: `HH` hour (hex), `MM` minute (hex), `0D` duration
-(3/4/5/6 minutes — the leading `0` is a fixed prefix, the second digit is the duration).
+(**one byte, minutes**). This project follows the vendor UI and offers only 3 / 4 / 5 / 6
+minutes; measured 2026-11-07, **the firmware does not validate the range** (`0x00`, `0x07`
+and `0x0F` were all accepted). The "leading `0`" is just the high nibble from the vendor's
+string building, not a protocol prefix.
 
 Example — every day at 03:00 for 5 minutes → `DB 08 08 01 03 00 05`
 
@@ -164,7 +167,8 @@ In short: **the bundle must be decrypted; the protocol does not.**
   the PC cannot see it, and vice versa. Press *Disconnect* before switching controllers;
 - **The schedule is replaced, not appended**: saving writes your whole edited list over the
   device's configuration. Up to 4 entries (a **measured firmware limit** — a fifth is silently
-  dropped), 3–6 minutes each;
+  dropped), 3–6 minutes each (**front-end limit only** — the firmware does not validate it,
+  see protocol §8.4);
   to remove one, delete it in the editor and save;
 - **Spacing constraint**: the vendor front end requires ≥ 59 minutes between entries and all
   entries within 23 hours of the first. **Measured: the firmware checks neither — these are
@@ -195,7 +199,10 @@ In short: **the bundle must be decrypted; the protocol does not.**
   from the reply to `DB 04 02`. Measured 2026-11-07: you must **subscribe to `1002` before
   sending**, otherwise the reply is dropped and not buffered — that was the cause of the older
   "repeatedly no reply" reports. Both clients here subscribe first and are unaffected
-  (see [docs/protocol.en.md](docs/protocol.en.md) §3.2);
+  (see [docs/protocol.en.md](docs/protocol.en.md) §3.2).
+  One further single observation: **during the power-on auto run** even a correct subscription
+  produced 0 replies, while the same frame answered immediately once the run finished
+  (not reproduced, see protocol §9);
 - The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
 
 ---

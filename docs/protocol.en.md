@@ -167,7 +167,11 @@ DB 08 08 | Count (1 byte) | [HH (1B) MM (1B) 0D (1B)] × Count
 - `Count`: total number of entries **after** this write — the device replaces the whole table
 - `HH`: hour, 0–23
 - `MM`: minute, 0–59
-- `0D`: duration in minutes; only **3 / 4 / 5 / 6** are supported (`0` is a fixed prefix)
+- `0D`: duration in minutes, **one byte**. The firmware **does not validate the range** —
+  `0x00` / `0x07` / `0x0F` were all accepted verbatim on 2026-11-07 (see §8.4). The
+  3 / 4 / 5 / 6 limit is **front-end only**; the mini program's `f"0{d}"` string building
+  makes single digits look like "`0` + digit", but that is just the high nibble, not a
+  protocol-level fixed prefix.
 
 Examples:
 
@@ -220,6 +224,16 @@ Include only the entries you want to keep, never the ones you want to delete.
 > In the source this number is `listLen`, set from `t.len - 1` (the existing total minus one), so
 > after splicing one entry out it equals exactly "remaining count".
 > Because the maximum is only 4, `0N` looks like BCD, but it is a plain hexadecimal integer.
+
+**Measured 2026-11-07 (see §8.4)**: the delete frame really works; until now it was only
+inferred from the source.
+
+| Sent | Reply | Result |
+| --- | --- | --- |
+| `DB 00 08 01 02 00 03` | `BD0D08 020003 FFFFFFFFFFFFFFFFFF 00` | Table reduced to 1 entry |
+| `DB 00 08 00` | 0 frames in this window; an all-`FF` empty table arrived in the next | Cleared, but the reply was delayed |
+
+As with `DB 08 08`: **clearing does not guarantee an immediate reply — always read back.**
 
 ---
 
@@ -345,8 +359,8 @@ in section 4.
 | --- | --- |
 | `6..14` | Start timestamp (8 hex, unix seconds) |
 | `14..18` | Duration in seconds |
-| `18..20` | Trigger: `0` scheduled / `1` manual (see §8.2) |
-| `20..22` | Record type: `00` start / `01` end (always `01` in practice) |
+| `18..20` | Trigger: `0` scheduled / `1` non-scheduled (button, **power-on auto run**, see §8.4) |
+| `20..22` | Record type: `00` start / `01` end (44 of 45 were `01`; the oldest was `00`) |
 
 Real sample:
 
@@ -362,12 +376,16 @@ Flow:
 
 ```
 send DB 01 05
-  → receive BD0805 (record 1)
+  → receive BD0805 (record 1; only the first frame uses this command word)
   → reply DB 06 06 01 + that record's start timestamp (4 bytes)
-  → receive BD0805 (record 2)
+  → receive BD0806 (every subsequent record uses this command word)
   → reply DB 06 06 01 + timestamp
   → …
-  → when sub(6,14) == FFFFFFFF and state is 00, there are no more records
+  → BD0806 FFFFFFFF FFFFFF 00 marks the end of the buffer
+
+(Measured 2026-11-07: one full drain yielded 45 records — the first `BD0805`, the other
+44 `BD0806` — ending with `BD0806 FFFFFFFF FFFFFF 00`. Older notes saying "every record
+is BD0805" were wrong.)
 ```
 
 The original mini program stores both `00` (start) records and `01` (end) records, the latter
@@ -398,26 +416,36 @@ Corroborating: `DB 01 05` served `0x00084B70`; without acking, a second `DB 01 0
    Tapping twice yields two non-overlapping slices, which looks like "records went missing".
 2. **No ack, no progress**: re-querying without acking returns the same record and can look
    like a hang.
-3. Whether the cursor wraps after `FFFFFFFF`, and whether a power cycle resets it, is **untested**.
+3. **The cursor does not wrap after `FFFFFFFF`** (measured 2026-11-07): re-sending
+   `DB 01 05` still returns `BD0805 FFFFFFFF FFFFFF 00`; only a new record makes it
+   readable again. After a power cycle it returned to the newest record (the first one
+   after reboot was the freshly created record) — **a single observation**.
 
-> Inference (**not proven**): the §9 "the newest few records disappear after a power cut"
-> report is probably the cursor moving, not RAM loss. To settle it, read to `FFFFFFFF`, note
-> the total, then power-cycle and count again.
+> **A power cut really loses records — it is not just a cursor illusion** (observed
+> 2026-11-07, not a controlled comparison). Before the cut the chain contained a set of
+> "exact multiple of 3600" class-B timestamps plus the `2026-04-03` record; after a full
+> drain post-reboot all of those were **gone** and the chain started directly at
+> `2026-04-02`, with one new power-on record (`ts=0` / `type=1`). Together with the earlier
+> "newest 3 records vanished" report this points to **the most recent records not being
+> flushed**. To confirm, record the full list before the cut and compare entry by entry
+> afterwards. See §9.
 
 Observed behaviour:
 
 - **Newest first** — only true while the cursor sits at the newest position, see above;
-- The device keeps a **ring buffer** of unknown depth: 42 records were read in a row without
-  reaching the end, the oldest already at 2026-04-03;
-- Every record describes a **completed** run (bytes `20..22` always `01`); durations observed
-  are 180 s and 300 s;
-- Some records carry timestamps near zero (`00000000`, `0003D4C2`, `00030570`, …), which means
-  the **device clock had been reset**. Treat those times as unknown — but they **still must be
-  acknowledged**, otherwise the records behind them are unreachable.
-- A second family of timestamps looks like `0x00030570`: they are **exact multiples of 3600**
-  and alternate **13 h / 11 h** apart, matching the `02:00` and `15:00` schedules. The state
-  reply at the same moment reports a correct wall-clock `next run`, so **the log time base and
-  the scheduling clock are two different things**. Mechanism unknown, see §9.
+- **Ring buffer depth = 45 records (measured)**: one drain reached
+  `BD0806 FFFFFFFF FFFFFF 00` after exactly 45 records;
+- 44 of 45 had `20..22` = `01` (end), **the oldest was `00`** — so "always `01`" is wrong and
+  start-type records do exist, just rarely. All 45 here were 180 s (300 s was measured in §8.2);
+- Timestamps come in two families. **A**: real unix seconds (44 records here,
+  `2026-02-18` … `2026-04-02`, 02:00 every day, exactly 24 h apart). **B**: small values
+  (`00000000`, `0003D4C2`, `00030570`, …) that are **exact multiples of 3600** and alternate
+  **13 h / 11 h** apart, matching the `02:00` and `15:00` schedules.
+- **Class B disappears after a power cycle; class A survives.** The state reply at the same
+  moment still reports a correct wall-clock `next run`. **Inference**: class B was recorded
+  as "hours since power-on" while the clock was unset, and lived only in RAM;
+  **not proven**, mechanism still unknown (see §9). Both families **must be acknowledged**,
+  otherwise the records behind them are unreachable.
 
 ### 5.4 Warnings
 
@@ -546,7 +574,7 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 | State frame before subscribing | `DB 04 02` + ts, not subscribed to `1002` | **0 frames** | reply dropped |
 | Subscribe afterwards | subscribe `1002`, wait 6 s | **still 0 frames** | **not buffered, not replayed** |
 | Same frame once subscribed | as above | `BD0E02 00 012C 0000 64 6AEF6720 6AEF3956` | immediate reply; `next run` = `2026-11-08 02:00:00` |
-| Idle listen | — (12 s, nothing sent) | **0 frames** | the device never pushes unprompted |
+| Idle listen | — (12 s, nothing sent) | **0 frames** | no unsolicited pushes **while idle** (not tested during a run, see §9) |
 | Re-query without ack | `DB 01 05` twice, no ack in between | both times `BD0805 00084B70 012C 00 01` | cursor does not move; same record re-sent |
 | Continuous read | `DB 06 06 01` ×42 | 42 records, ending at `0x69CEAEA0` (2026-04-03 02:00) | ring depth **≥ 42** |
 | **Resume across connections** | reconnect, then `DB 01 05` | first record `0x69CD5D20` (2026-04-02 02:00) | **cursor survives disconnection** (see §5.3) |
@@ -560,36 +588,87 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 > All that can be said is "logs and scheduling use two different time bases".
 > **Why, and how to map it back to wall clock, is unknown.**
 
+### 8.4 2026-11-07 evening (laptop moved next to the device, RSSI −70 to −82 dBm, stable link)
+
+The user power-cycled the unit by long-press (**it runs one sterilization cycle at power-on**).
+Two connections: one for read-only probes, one for the write probes. **The original schedule
+was restored and read back after all write cases** (last row).
+
+| Step | Sent | Received | Result |
+| --- | --- | --- | --- |
+| State reply | `DB 04 02` + ts, `1002` already subscribed | `BD0E02 00 00B4 0000 64 6AEF6720 6AEF443F` | `next run` = 11-08 02:00; `6AEF443F` = **device clock 23:31:11**, sync worked |
+| Full log drain | `DB 01 05` → `DB 06 06 01` ×45 | 45 records + `BD0806 FFFFFFFF FFFFFF 00` | **ring depth = 45**; first frame `BD0805`, the rest `BD0806` |
+| Cursor wrap | `DB 01 05` again after the end marker | `BD0805 FFFFFFFF FFFFFF 00` | **no wrap**, stays at the end |
+| Idle listen | — (10 s; another 60 s run) | 0 frames | no unsolicited pushes **while idle** (not tested during a run, see §9) |
+| **Delete frame** | `DB 00 08 01 020003` | `BD0D08 020003 FF×6 00` | delete frame works (previously only inferred) |
+| Delete, clear all | `DB 00 08 00` | 0 frames here; all-`FF` empty table in the next window | cleared, reply delayed |
+| **Duration bounds** | duration byte `00` / `0F` / `07` | replies `020000` / `02000F` / `020007` | **firmware does not validate duration**; 3–6 min is front-end only |
+| Spacing recheck | 30 min / 59 min pairs | both stored verbatim | consistent with §8.2 |
+| 1–4 entries | `DB 08 08 01..04` | slot count matches, trailing byte always `00` | 4-slot structure reconfirmed |
+| **Restore and read back** | `DB 08 08 02 020003 0F0005` → full `DB 01 07` sequence | `BD0D07 020003 0F0005 FF×6 44` | field-for-field identical to before the tests |
+
+> **Write replies can slip into the next command's window.** Four of the 12 cases produced
+> no reply on the spot, yet their `BD0D08` showed up in the very next case's 1 s window
+> (the `del0` empty table landed in `dur00`, `dur0F`'s `02000F` in `dur07`). This confirms
+> §8.2 ("a write does not always produce a reply") and explains it: **not lost, delayed**.
+> Clients still must read back rather than trust the reply.
+
+> **The power-on auto run left a log record.** The first record of the drain was
+> `BD0805 00000000 00B4 01 01` (`ts=0` / 180 s / `type=1` / end), matching the user's
+> "it starts sterilizing right after power-on". The clock had not been synced since reboot,
+> hence `ts=0`. **A single observation.**
+
+> **Log chain changed across the power cut.** Before it (§8.3) the chain held a set of
+> class-B "multiples of 3600" timestamps and `2026-04-03`; after it, the 44 historical
+> records were all class-A real unix seconds (`2026-02-18` … `2026-04-02`, 02:00 daily),
+> with class B and `04-03` **absent**. See §9.
+
 ---
 
 ## 9. Unverified
 
-> Items settled on real hardware are no longer listed here — see §8.2 and §8.3.
+> Items settled on real hardware are no longer listed here — see §8.2, §8.3 and §8.4.
 > Only genuinely open questions remain.
 
-- **Do button presses / the body radar produce BLE notifications?** — two listening sessions
-  (90 s / 200 s) produced **zero notifications**. (In one of them the user accidentally
-  long-pressed and powered the device off; it was silent for ~2.5 min and then recovered, with no
-  new log record.) A third idle listen on 2026-11-07 (12 s, nothing sent) also saw **0 frames** —
-  the device never pushes unprompted.
-- **"The newest few log records disappear after a power cycle"** — before the cycle the newest
-  four were `10-29 15:00 / 10-29 02:00 / 10-28 15:00 / 10-28 02:00`; after power-up the newest
-  became `10-28 02:00`. **Now a better explanation exists but is unproven**: `DB 01 05` is a
-  persistent cursor (§5.3), so the read start point moves with what was read before — "missing
-  records" may be the cursor having advanced. To settle it: read to `FFFFFFFF`, note the total,
-  power-cycle, count again.
-- **The log time base differs from the scheduling clock** — at the same moment the state reply's
-  `next run` is a correct wall-clock value while log timestamps are small numbers that are exact
-  multiples of 3600, spaced 13 h / 11 h apart. Mechanism unknown.
+- **Do button presses / the body radar produce BLE notifications?** — four pure listening
+  sessions (90 s / 200 s / 12 s / 60 s) produced **zero notifications**. The latest one
+  subscribed to `2a19` + `1002` while the user short-pressed the button and waved in front
+  of the device: still 0 frames in 60 s. ⚠️ **All four ran while the device was idle.** An
+  open hypothesis: **to save power the device only senses the body / button during a
+  sterilization run** (plausible for a UV sterilizer — it must pause when someone approaches).
+  If so, zero idle notifications are expected and **do not justify "the device never pushes"**.
+  **To verify**: trigger a run with `DB 02 04 01`, then listen for notifications during the
+  run while waving / pressing. UV caution: do not look into the lamp or put a hand inside;
+  wave an object 20–30 cm away instead.
+- **How many log records a power cut actually loses** — after the 2026-11-07 reboot, the
+  class-B counter-style timestamps and the `2026-04-03` record were all gone, the chain
+  started at `2026-04-02`, and only one new record appeared. Together with the earlier
+  "newest 3 vanished" report this points to **the most recent records not being flushed**,
+  but there is **no controlled comparison** (full list before, entry-by-entry after), so no
+  quantitative claim.
+- **The log time base (class-B timestamps)** — see §5.3. Class B disappears after a power
+  cut while class A (real unix seconds) survives, suggesting the former is RAM-only;
+  **inference, unproven**. Why there are two time bases, and how to map back to wall clock,
+  is still unknown.
+- **Does the state reply vanish during the power-on run?** — right after power-up, with the
+  auto run in progress, `DB 04 02` sent after subscribing to `1002` still produced 0 frames;
+  later in the same session (run finished) the same frame replied `BD0E02` immediately. A
+  single A/B comparison, **not reproduced**; clients should still tolerate a missing reply.
+- **Does every power-on auto run write a `type=1` record?** — after this reboot the first
+  record was `ts=0 / 180 s / type=1 / BD0805`, matching the user's report; **one observation
+  only**, not repeated.
 - Whether the schedule survives a battery swap (it should)
-- Depth limit of the log ring buffer — **≥ 42** (42 records read on 2026-11-07 without reaching
-  `FFFFFFFF`, the oldest already at 2026-04-03)
-- Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` (`00` throughout this round;
-  `0C` in earlier records)
-- Whether the leading `0` in the duration byte `0D` is a fixed prefix or a length/type marker
+- Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` — 11 `BD0D08` frames here
+  were all `00`, the lone `BD0D07` was `0x44`, and earlier records showed `0C`. **It only
+  varies on read-back frames** is a new clue; meaning still unknown.
 - What makes the advertising name flip between `kHID` and `QUANGE-WY020702`. Measured
-  2026-11-01: it switched once within 40 s and then stayed, with every other advertising field
-  unchanged. **Trigger unknown.**
+  2026-11-01: one switch within 40 s, then stable, with every other advertising field
+  unchanged. **Trigger unknown.** Every scan this round showed `QUANGE-WY020702`
+  (−70 to −82 dBm); the switch did not recur.
 - Whether the `0x1812` declaration in the advertisement disappears along with the name
   (expected to, but not measured)
 - **Exact Telink part number** — undeterminable at the BLE layer (see §1); needs the silkscreen
+
+**Settled, no longer open**: ring depth (**45 records**), the `DB 00 08` delete frame, the
+meaning of the duration byte `0D`, whether `20..22` is always `01`, and whether the cursor
+wraps after `FFFFFFFF`. All in §8.4.
