@@ -24,6 +24,7 @@ import io
 import os
 import struct
 import sys
+import tempfile
 
 MAGIC = 0xBE
 ENDS = 0xED
@@ -59,13 +60,20 @@ def parse_legacy(data: bytes):
             raise ValueError("Index area truncated")
         name_len = struct.unpack(">I", data[pos:pos + 4])[0]
         pos += 4
+        if name_len > len(data) - pos:
+            raise ValueError(f"Entry {len(entries) + 1}: name length {name_len} "
+                             f"exceeds the remaining {len(data) - pos} bytes")
         name = data[pos:pos + name_len].decode("utf-8", "replace")
         pos += name_len
+        if pos + 8 > len(data):
+            raise ValueError(f"Entry {len(entries) + 1}: truncated offset/size pair")
         off, size = struct.unpack(">II", data[pos:pos + 8])
         pos += 8
         entries.append((name, off, size))
 
     body_start = 14 + index_len  # start of the data area
+    if body_start > len(data):
+        raise ValueError(f"Index length {index_len} points past the end of the file")
     out = []
     for name, off, size in entries:
         start = body_start + off
@@ -186,12 +194,41 @@ def find_v1_index(buf: bytes, min_entries: int = 3):
 # --------------------------------------------------------------------------
 # Output / search
 # --------------------------------------------------------------------------
+def _safe_output_path(name, outdir):
+    """Resolve a bundle entry name to a path strictly inside outdir.
+
+    Entry names come from the (untrusted) index. A crafted bundle can carry
+    '/../../etc/passwd' or a Windows drive letter, and os.path.join happily
+    resolves those outside the output directory. Return None for anything that
+    is not a plain relative path under outdir.
+    """
+    if not name or "\x00" in name:
+        return None
+    cleaned = name.replace("\\", "/")
+    if cleaned.startswith("//") or (len(cleaned) >= 2 and cleaned[1] == ":"):
+        return None                       # UNC path / Windows drive letter
+    parts = cleaned.split("/")
+    if any(p == ".." for p in parts):
+        return None                       # never silently rewrite a traversal
+    parts = [p for p in parts if p not in ("", ".")]
+    if not parts:
+        return None
+    root = os.path.realpath(outdir)
+    path = os.path.realpath(os.path.join(root, *parts))
+    if not path.startswith(root + os.sep):
+        return None                       # symlink or separator trickery
+    return path
+
+
 def dump(files, outdir):
+    """Write each entry strictly inside outdir; refuse names that try to escape."""
     n = 0
     for name, blob in files:
-        safe = name.replace("/", "\\") if os.name == "nt" else name
-        path = os.path.join(outdir, safe.lstrip("\\/"))
-        os.makedirs(os.path.dirname(path) or outdir, exist_ok=True)
+        path = _safe_output_path(name, outdir)
+        if path is None:
+            print(f"[!] skipped unsafe entry name: {name!r}", file=sys.stderr)
+            continue
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(blob)
         n += 1
@@ -262,7 +299,6 @@ def _build_legacy(files):
 
 def _build_v1(files, preamble=b"\x00" * 32):
     """Build a V1MMWX bundle: preamble + index + trailing junk + data, with absolute offsets"""
-    n = len(files)
     idx_len = sum(12 + len(name.encode()) for name, _ in files)
     data_start = len(preamble) + idx_len + 16       # 16 bytes of junk deliberately sit between index and data
     total = data_start + sum(len(b) for _, b in files)
@@ -306,7 +342,9 @@ def selftest():
             for name, p, idx, ctx in grep(out, ["2b12", "QUANGE"]):
                 print(f"   hit {p!r} @ {name}:{idx}  ...{ctx[:70]}...")
 
-    # PC-encrypted bundle: XOR byte-wise with the appid, then parse as legacy
+    # PC-encrypted bundle: XOR byte-wise with the appid, then parse as legacy.
+    # This only proves the parser handles an XOR-round-tripped buffer; a real PC
+    # bundle uses a different key schedule and is not covered by this test.
     appid = "wx1234567890abcdef"
     plain = _build_legacy(files)
     key = appid.encode()
@@ -316,6 +354,18 @@ def selftest():
     ok_all = ok_all and ok
     print(f"[selftest] {'PC-XOR':12s} bundle {len(enc):>6,} bytes -> {len(out)} files  "
           f"{'PASS' if ok else 'FAIL'}")
+
+    # Path traversal: a crafted index entry must never write outside outdir.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "out")
+        os.makedirs(root)
+        n = dump([("/../../escaped.txt", b"PWNED"), ("/app.js", b"ok")], root)
+        escaped = os.path.exists(os.path.join(tmp, "escaped.txt"))
+        kept = os.path.isfile(os.path.join(root, "app.js"))
+        ok = (n == 1 and not escaped and kept)
+        ok_all = ok_all and ok
+        print(f"[selftest] {'path guard':12s} unsafe entry skipped            "
+              f"{'PASS' if ok else 'FAIL'}")
     return 0 if ok_all else 1
 
 

@@ -54,8 +54,6 @@ import sys
 import time
 from datetime import datetime
 
-from bleak import BleakClient
-
 import blectx as bx
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -265,7 +263,7 @@ async def run(a):
             try:
                 await client.start_notify(c, on_notify)
                 log(f"[+] Subscribed to {bx.short_uuid(c.uuid)}")
-            except Exception as e:
+            except Exception:
                 log(f"[!] Subscribe to {bx.short_uuid(c.uuid)} failed "
                     f"(replies may be lost)")
 

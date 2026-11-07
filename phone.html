@@ -167,6 +167,15 @@
   const CH_WRITE  = "00001001-0000-1000-8000-00805f9b34fb";
   const CH_NOTIFY = "00001002-0000-1000-8000-00805f9b34fb";
   const MAX_ITEMS = 4;
+  const DURATIONS = [3, 4, 5, 6];
+
+  // localStorage is untrusted input: an older version, an extension or a manual
+  // edit can leave malformed entries behind. Validate before every DB 08 08 write,
+  // because that frame replaces the whole schedule and cannot be undone.
+  const isValidItem = it =>
+      !!it && Number.isInteger(it.h) && it.h >= 0 && it.h <= 23 &&
+      Number.isInteger(it.m) && it.m >= 0 && it.m <= 59 &&
+      DURATIONS.includes(it.d);
 
   // Match on prefixes only, never on an exact model (suffixes differ by batch)
   const NAME_FILTERS = [
@@ -215,6 +224,10 @@
       (ts >>> 24) & 0xFF, (ts >>> 16) & 0xFF, (ts >>> 8) & 0xFF, ts & 0xFF]);
   }
   function frameSetList(list) {
+    // Last line of defence: never build a whole-table overwrite from bad data,
+    // even if a future caller forgets to run validate() first.
+    if (!list.length || list.length > MAX_ITEMS || list.some(it => !isValidItem(it)))
+      throw new Error("定时数据不合法，拒绝构造写入帧");
     const b = [0xDB, 0x08, 0x08, list.length];
     for (const it of list) b.push(it.h & 0xFF, it.m & 0xFF, it.d & 0xFF);
     return new Uint8Array(b);
@@ -369,7 +382,7 @@
       };
 
       const sel = document.createElement("select");
-      [3, 4, 5, 6].forEach(d => {
+      DURATIONS.forEach(d => {
         const o = document.createElement("option");
         o.value = String(d);
         o.textContent = d + " 分钟";
@@ -408,6 +421,10 @@
   function validate(list) {
     if (!list.length) return "至少需要一条定时";
     if (list.length > MAX_ITEMS) return `最多 ${MAX_ITEMS} 条定时（固件上限，多出的会被丢弃）`;
+    for (let i = 0; i < list.length; i++) {
+      if (!isValidItem(list[i]))
+        return `第 ${i + 1} 条定时数据不合法（时间 00:00–23:59，时长只能是 3/4/5/6 分钟）`;
+    }
     if (list.length === 1) return null;
 
     const mins = list.map(x => x.h * 60 + x.m).sort((a, b) => a - b);
@@ -581,7 +598,10 @@
   async function saveList() {
     const err = validate(items);
     if (err) { log("无法保存：" + err); alert(err); return; }
-    await send(frameSetList(items), "保存 " + items.length + " 条定时");
+    let frame;
+    try { frame = frameSetList(items); }
+    catch (e) { log("无法保存：" + e.message); alert(e.message); return; }
+    await send(frame, "保存 " + items.length + " 条定时");
     await new Promise(r => setTimeout(r, 1200));
     await readList();
   }
@@ -594,7 +614,13 @@
     }
     try {
       const saved = JSON.parse(localStorage.getItem("quange_items") || "[]");
-      if (Array.isArray(saved) && saved.length) items = saved;
+      if (Array.isArray(saved)) {
+        const clean = saved.filter(isValidItem).slice(0, MAX_ITEMS)
+                           .map(it => ({ h: it.h, m: it.m, d: it.d }));
+        if (clean.length !== saved.length)
+          log("已忽略本地存储中不合法的定时数据（" + (saved.length - clean.length) + " 条）");
+        items = clean;
+      }
     } catch (_) {}
     renderItems();
     setConnected(false);

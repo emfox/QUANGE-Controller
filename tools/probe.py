@@ -8,8 +8,9 @@ Answers the two open questions from the handoff (section 9, items 1 and 2):
        no-disassembly firmware dump is even possible
     2. What does the whole GATT tree look like       -> confirms 00FB/1001/1002
 
-Sends nothing that changes device state. The only writes are CCCD subscriptions
-performed by the BLE stack itself.
+Truly read-only: it never writes to a GATT characteristic. The only writes are
+the CCCD subscriptions performed by the BLE stack itself. Use
+set_timer.py --version if you need the firmware version.
 
 Usage:
     python3 probe.py                 # scan, connect, dump, exit
@@ -79,21 +80,16 @@ async def survey(a):
         else:
             log("[result] No OTA service, so no wireless dump path. Only SWS wiring")
             log("         could read the flash, which means opening the shell.")
-
-        # ---- item 3 (cheap): firmware version ----
-        target = bx.find_char(client, "1001")
-        if target is not None:
-            log("\n--------------- Firmware version ---------------")
-            await client.write_gatt_char(target, bytes.fromhex("DB01A4"), response=False)
-            log("[TX] DB 01 A4")
-            await asyncio.sleep(2.0)
+        return 0
+    except Exception as e:
+        log(f"[!] Survey failed: {type(e).__name__}: {e}")
+        return 1
     finally:
         try:
             await client.disconnect()
             log("[*] Disconnected")
         except Exception:
             pass
-        return 0
 
 
 def cli():
