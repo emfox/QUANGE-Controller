@@ -183,7 +183,9 @@ In short: **the bundle must be decrypted; the protocol does not.**
   are no longer recorded and the day/week/month charts are gone for good. `--logs` / `--logs-all`
   still read the records currently on the device, but there's nowhere to keep them.
   The device has a **read cursor**: each read resumes where the last one stopped rather than
-  starting from the newest record — see [docs/protocol.en.md](docs/protocol.en.md) §5.3.
+  starting from the newest record, and **only a power cycle returns it to the newest** —
+  on a USB-powered unit, long-press off/on once if reads come back empty.
+  See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
   For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never
@@ -200,9 +202,9 @@ In short: **the bundle must be decrypted; the protocol does not.**
   sending**, otherwise the reply is dropped and not buffered — that was the cause of the older
   "repeatedly no reply" reports. Both clients here subscribe first and are unaffected
   (see [docs/protocol.en.md](docs/protocol.en.md) §3.2).
-  One further single observation: **during the power-on auto run** even a correct subscription
-  produced 0 replies, while the same frame answered immediately once the run finished
-  (not reproduced, see protocol §9);
+  Re-tested: **state replies are normal during a sterilization run** (6/6), so the earlier
+  single "no reply during the power-on run" observation does not hold — the device was
+  probably not ready yet right after power-up (see protocol §8.5);
 - The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
 
 ---

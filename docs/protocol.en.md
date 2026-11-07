@@ -12,7 +12,7 @@
 
 | Item | Value |
 | --- | --- |
-| Advertising name | `QUANGE-WY020702` (normal) **or** `kHID` (the module's factory default, see note below) |
+| Advertising name | `QUANGE-WY020702` (steady) **or** `kHID` (module factory default, **only the first packet of each scan**, see note below) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | Advertising payload | Service UUIDs `0x1812` (**declared only — the device provides no HID service**) + `0x180F` (battery, real); manufacturer data payload = **last 4 bytes of the MAC**, company ID `0x451C` |
 | SoC | Telink. **Exact part number unknown** — see note below |
@@ -59,13 +59,24 @@
 > the Telink OTA service. In other words the device advertises a service it does not provide.
 >
 > Practical consequence: **the advertising name and `0x1812` come from the same config block,
-> so neither is a stable identifier.** If the name is rewritten, the `0x1812` declaration may
-> vanish with it (not measured yet — a caution, not a conclusion). **Only the MAC is reliable.**
+> so neither is a stable identifier.** Renaming is a cloud-only operation with a dead backend
+> and no device-side write path, so "does `0x1812` vanish with the name" cannot be measured;
+> it is **closed as untestable** (see §9). **Only the MAC is reliable.**
 >
 > Conversely, **the original mini program only accepts `QUANGE-WY020702`** (hardcoded twice in
 > `conble.js`), so it cannot find the device while it advertises as `kHID` — a bug in the vendor
 > code, not a faulty device. Our `phone.html` / `set_timer.py` accept three prefixes plus the
 > service fallback, so they connect in either state.
+>
+> **What triggers the switch is now measured (2026-11-08, USB powered).** Two 60 s raw
+> advertisement captures: `kHID` appeared in **only the first packet of each scan**
+> (1/121 in round A, 1/98 in round B), everything after was `QUANGE-WY020702`; RSSI,
+> service UUIDs and manufacturer data were identical throughout. Connecting once and
+> disconnecting, then scanning again, reproduced the same pattern. So it is **not an
+> alternation between two names** — it is a startup default name followed by the fixed one.
+> `kHID` may be a cached advertisement replayed when the scanner starts, or the firmware's
+> first packet; **the mechanism is undecided, but the behaviour is settled**. In practice,
+> do not decide by name during the first second of a scan, or just connect by MAC.
 
 > **Do not conflate two things.** "No encryption" here refers to the **BLE frames on the air**.
 > The mini program bundle itself **is** encrypted (a `V1MMWX` container: drop the 6-byte header,
@@ -157,6 +168,17 @@ The timestamp calibrates the device clock, and it is the prerequisite for the la
 > The older note "this frame never replies" was an artefact of the ordering above: the reply
 > was dropped because nothing was listening yet. `set_timer.py` and `phone.html` both subscribe
 > before sending and are therefore unaffected; a hand-written client must keep that order.
+>
+> **The timestamp in this frame *is* the device clock** (measured 2026-11-08): setting it to
+> `0x00000100` made the state reply echo `00000100` in `26..34`, and `next run` became
+> `0x00006270` — i.e. the next schedule point 15:00 local (07:00 UTC = 25200 s) after
+> 08:04 local. So the device **evaluates schedules in UTC+8 local HH:MM**. Send real unix
+> seconds; no conversion needed.
+>
+> **State replies are normal during a run** (6/6 samples): `BD0E02 01 ...` kept arriving,
+> with `12..16` climbing from `001E` (30 s) to `00A0` (160 s) and resetting to zero at the
+> end. The earlier single "no reply during the power-on run" observation does not hold;
+> the device was probably not ready yet right after power-up.
 
 ### 3.3 Set schedule
 
@@ -196,8 +218,13 @@ is structural: the `BD0D07` / `BD0D08` payload has **exactly four slots**, so th
 put a fifth (see §4).
 
 **Empty slots and the trailing byte**: the `BD0D07` / `BD0D08` payload is **exactly four fixed
-slots** (3 bytes per slot, empty slots are `FF FF FF`) followed by one extra byte (observed `0C`
-and `00`; purpose unknown and not needed when writing). Skip `FF` slots and ignore the last byte.
+slots** (3 bytes per slot, empty slots are `FF FF FF`) followed by one extra byte.
+**Settled by a controlled probe on 2026-11-08**: changing byte 3 of the clock-sync timestamp
+to `4D` / `4E` / `4F` made the `BD0D07` trailing byte follow exactly `4D` / `4E` / `4F`;
+repeating the same offset gave `00` (`BD0D08` is always `00`). So it is a **volatile field
+derived from the device's internal clock** (it carries a clock byte when the clock changes) —
+not a checksum, not battery level, and unrelated to the schedule contents.
+**Skip `FF` slots and ignore the trailing byte**; do not try to interpret it.
 
 > Because the semantics are a whole-table replace, **you never need to read the current list
 > first** — just write the list you want.
@@ -296,12 +323,19 @@ All five command words share the same field layout.
 While sterilizing, remaining seconds = `sub(8,12) - sub(12,16)`
 (measured `B4 - 0 = 180 s`, matching the 3-minute default).
 
-> **About `8..12` / `12..16`**: these were once documented as "sterilization start timestamp /
-> current timestamp", but that was **only a guess** — each segment holds 4 hex characters
-> (2 bytes), nowhere near a 32-bit unix second value, and it contradicts the annotations on the
-> sample in this same section (`180s` / `elapsed 0`). **Their exact nature is still unconfirmed**;
-> all that is measured is that "total − elapsed" behaves correctly. Good enough for a progress
-> display, but do not treat them as timestamps.
+> **About `8..12` / `12..16` (confirmed 2026-11-08)**: these are not timestamps. They are
+> **total seconds / elapsed seconds of the current run**. Sampled through one real 180 s run:
+>
+> | Sample | `8..12` | `12..16` | State |
+> | --- | --- | --- | --- |
+> | +33 s | `00B4` (180) | `001E` (30) | `01` running |
+> | +65 s | `00B4` | `003E` (62) | `01` |
+> | +98 s | `00B4` | `005F` (95) | `01` |
+> | +130 s | `00B4` | `007F` (127) | `01` |
+> | +163 s | `00B4` | `00A0` (160) | `01` |
+> | +196 s | `00B4` | `0000` | `00` idle, reset |
+>
+> Remaining = `sub(8,12) - sub(12,16)`. Good for a progress display; **never a timestamp**.
 
 > **Why you cannot blindly read `18..26`:**
 >
@@ -416,10 +450,15 @@ Corroborating: `DB 01 05` served `0x00084B70`; without acking, a second `DB 01 0
    Tapping twice yields two non-overlapping slices, which looks like "records went missing".
 2. **No ack, no progress**: re-querying without acking returns the same record and can look
    like a hang.
-3. **The cursor does not wrap after `FFFFFFFF`** (measured 2026-11-07): re-sending
-   `DB 01 05` still returns `BD0805 FFFFFFFF FFFFFF 00`; only a new record makes it
-   readable again. After a power cycle it returned to the newest record (the first one
-   after reboot was the freshly created record) — **a single observation**.
+3. **The cursor does not wrap after `FFFFFFFF` and cannot be reset over the protocol**
+   (measured 2026-11-08). ACK-ing the end marker (`DB 06 06 01 FFFFFFFF`), re-syncing the
+   clock, reading the schedule, and the full init sequence were all tried — every one still
+   returned `BD0805 FFFFFFFF FFFFFF 00`. A further full 180 s run under the real clock left
+   the cursor at the end too.
+   ⟹ **Only a power cycle returns it to the newest record** (2026-11-07 reboot).
+   ⚠️ On a unit converted to permanent USB power, "read logs" will keep returning empty
+   until the device is long-pressed off and on again. That is a side effect of the power
+   mod, **not data loss**.
 
 > **A power cut really loses records — it is not just a cursor illusion** (observed
 > 2026-11-07, not a controlled comparison). Before the cut the chain contained a set of
@@ -468,6 +507,10 @@ connect
 ```
 
 If the full state reply is not received within 15 s, the mini program disconnects and retries.
+
+> **Do not send these frames too close together** (measured 2026-11-08): at 0.25 s spacing,
+> 8 of 12 read-back rounds got no `BD0D07`; at 0.6 s, 8/8 did. `set_timer.py` uses 1.2 s and
+> is safe. Keep **at least 0.5 s** between adjacent frames in your own client.
 
 ---
 
@@ -587,6 +630,8 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 >
 > All that can be said is "logs and scheduling use two different time bases".
 > **Why, and how to map it back to wall clock, is unknown.**
+> (After the USB power mod the clock no longer drops, so class B cannot recur; this item
+> is closed, see §9.)
 
 ### 8.4 2026-11-07 evening (laptop moved next to the device, RSSI −70 to −82 dBm, stable link)
 
@@ -623,50 +668,55 @@ was restored and read back after all write cases** (last row).
 > records were all class-A real unix seconds (`2026-02-18` … `2026-04-02`, 02:00 daily),
 > with class B and `04-03` **absent**. See §9.
 
+### 8.5 2026-11-08 (USB powered, RSSI −70 to −74 dBm, stable link)
+
+> The test unit has been converted to **permanent USB power** by the user: it no longer
+> powers itself off and no longer loses its clock, so power-cut / battery-swap behaviour
+> does not recur here. The corresponding §9 items are closed.
+
+| Step | Action | Result | Conclusion |
+| --- | --- | --- | --- |
+| Trailing-byte sampling | 12 full-sequence reads, 0.25 s apart | only 4 got a `BD0D07` | **frames too close together lose replies** |
+| Controlled tail probe | clock-sync byte 3 set to `4D` / `4E` / `4F` | tail followed exactly `4D` / `4E` / `4F`, repeated offset gave `00` | **clock-derived field, ignore it** |
+| Spacing fix | same sequence at 0.6 s | 8/8 received | keep ≥ 0.5 s between frames |
+| Fake clock | `DB 04 02` + `0x00000100` | state echoed `00000100`, `next run` = `0x6270` | **the timestamp is the clock; schedules use UTC+8 local HH:MM** |
+| State during a run | `DB 02 04 01` under the fake clock, 6 samples at 30 s | 6/6 replied `BD0E02 01`, `12..16` climbed 30→160 s then reset | **counters = total / elapsed; replies are fine during a run** |
+| Cursor reset attempts | ACK `FFFFFFFF` / re-sync / read table / full sequence | all still returned `FFFFFFFF` | **no protocol reset for the cursor** |
+| Real-clock run | full 209 s run, then read the log | still `BD0805 FFFFFFFF` | **new records do not pull the cursor back; only power-on does** |
+| Advertising name | 60 s scan → connect → 60 s scan | `kHID` was only the first packet of each round (1/121, 1/98), all others `QUANGE-WY020702` | **not an alternation; startup default then fixed** |
+
+> **Cursor vs USB power**: after draining to `FFFFFFFF`, neither protocol commands nor new
+> runs made the log readable again. Schedule reads/writes were unaffected throughout
+> (`BD0D07 020003 0F0005 …`). To read logs again, long-press the device off and on once —
+> **this is not log loss**. At the end of all tests the real unix clock was restored and the
+> schedule remained `02:00/3min + 15:00/5min`.
+
 ---
 
 ## 9. Unverified
 
-> Items settled on real hardware are no longer listed here — see §8.2, §8.3 and §8.4.
-> Only genuinely open questions remain.
+> Items confirmed on real hardware are in §8.2 – §8.5. Only **genuinely open** questions that
+> are worth further effort remain below.
 
-- **Do button presses / the body radar produce BLE notifications?** — **deliberately
-  closed, no longer tracked.** Four pure listening sessions (90 s / 200 s / 12 s / 60 s)
-  produced zero notifications, all while idle; it remains possible that the device only
-  senses the body / button during a run (power saving + UV safety). But **the protocol
-  exposes no control or configuration interface for the button or the radar** — even a
-  positive result could not be used to control anything, and it has no bearing on this
-  project (read/write the schedule, read the log). No further hardware time will be spent
-  on it. The only claim kept: **no unsolicited pushes while idle**.
-- **How many log records a power cut actually loses** — after the 2026-11-07 reboot, the
-  class-B counter-style timestamps and the `2026-04-03` record were all gone, the chain
-  started at `2026-04-02`, and only one new record appeared. Together with the earlier
-  "newest 3 vanished" report this points to **the most recent records not being flushed**,
-  but there is **no controlled comparison** (full list before, entry-by-entry after), so no
-  quantitative claim.
-- **The log time base (class-B timestamps)** — see §5.3. Class B disappears after a power
-  cut while class A (real unix seconds) survives, suggesting the former is RAM-only;
-  **inference, unproven**. Why there are two time bases, and how to map back to wall clock,
-  is still unknown.
-- **Does the state reply vanish during the power-on run?** — right after power-up, with the
-  auto run in progress, `DB 04 02` sent after subscribing to `1002` still produced 0 frames;
-  later in the same session (run finished) the same frame replied `BD0E02` immediately. A
-  single A/B comparison, **not reproduced**; clients should still tolerate a missing reply.
-- **Does every power-on auto run write a `type=1` record?** — after this reboot the first
-  record was `ts=0 / 180 s / type=1 / BD0805`, matching the user's report; **one observation
-  only**, not repeated.
-- Whether the schedule survives a battery swap (it should)
-- Meaning of the single trailing byte in `BD 0D 07` / `BD 0D 08` — 11 `BD0D08` frames here
-  were all `00`, the lone `BD0D07` was `0x44`, and earlier records showed `0C`. **It only
-  varies on read-back frames** is a new clue; meaning still unknown.
-- What makes the advertising name flip between `kHID` and `QUANGE-WY020702`. Measured
-  2026-11-01: one switch within 40 s, then stable, with every other advertising field
-  unchanged. **Trigger unknown.** Every scan this round showed `QUANGE-WY020702`
-  (−70 to −82 dBm); the switch did not recur.
-- Whether the `0x1812` declaration in the advertisement disappears along with the name
-  (expected to, but not measured)
-- **Exact Telink part number** — undeterminable at the BLE layer (see §1); needs the silkscreen
+- **Exact Telink part number** — undeterminable at the BLE layer (the PnP ID is an SDK
+  default constant, see §1). This unit has been opened for the USB mod, so **reading the
+  silkscreen on the main IC settles it**; that is the only route.
+- **Can logs stay readable long-term on USB power?** — known: after draining to `FFFFFFFF`,
+  no protocol command resets the cursor and new runs do not wrap it; only power-on does
+  (§8.5). What is untested is whether the device resets the cursor by itself after several
+  days of new records (e.g. at day rollover or on a scheduled run). That needs long-term
+  observation, not a single experiment. Workaround: **long-press off/on when reads come back
+  empty**.
 
-**Settled, no longer open**: ring depth (**45 records**), the `DB 00 08` delete frame, the
-meaning of the duration byte `0D`, whether `20..22` is always `01`, and whether the cursor
-wraps after `FFFFFFFF`. All in §8.4.
+**Deliberately closed, no longer tracked** (with reasons, to avoid repeating the work):
+
+| Item | Why closed |
+| --- | --- |
+| How many logs a power cut loses / does it reset the cursor / does power-on write `type=1` / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios no longer occur |
+| Mapping class-B log time base (exact multiples of 3600) | Class B was a product of a **lost / unsynced clock**; on USB power the clock never drops, so it cannot recur. Why two time bases existed is still unknown, but has no practical impact |
+| Does the state reply vanish during the power-on run? | Disproven: 6/6 replies during a run (§8.5). The earlier single zero-reply case was likely a not-yet-ready device |
+| Button / body-radar notifications | No control or configuration interface for either exists in the protocol; a positive result could not control anything |
+| Meaning of the trailing byte in `BD0D07` / `BD0D08` | Settled: clock-derived field, ignore it (§8.5) |
+| What triggers the advertising name switch | Settled: `kHID` appears only in the first packet of a scan, then stays fixed (§8.5) |
+| Does `0x1812` disappear with a renamed device? | Renaming is cloud-only with a dead backend; **no device-side write path**, so it cannot be measured |
+| Ring depth / delete frame / duration byte / `20..22` / cursor wrap | All measured, see §8.4 / §8.5 |
