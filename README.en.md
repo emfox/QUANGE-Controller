@@ -236,8 +236,15 @@ In short: **the bundle must be decrypted; the protocol does not.**
   For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2.
   **The web app now persists every record to a browser-local archive *before* sending its ACK**,
   warns before starting (cancellable) and exports JSON / CSV (Excel-ready); a refresh or an
-  accidental tab close no longer loses what was read. `--logs` / `--logs-all` still print plain
-  text, so redirect them to a file if you need to keep the output;
+  accidental tab close no longer loses what was read.
+  A record shown as **"unknown time"** was written while the device clock was unsynced — the
+  firmware stamps "seconds since 1970" instead of a wall-clock time then
+  ([docs/firmware-analysis.en.md](docs/firmware-analysis.en.md) §5). Connecting sends `DB 04 02`,
+  which syncs the clock, so everything written afterwards carries a real timestamp. Such records
+  usually date from before the USB-power conversion, or from an unsynced period right after a
+  power cycle, and they stay queued until read. The export keeps the device's raw field so it can
+  still be traced. `--logs` / `--logs-all` still print plain text, so redirect them to a file if
+  you need to keep the output;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never
   written to the device**. Unavailable now;

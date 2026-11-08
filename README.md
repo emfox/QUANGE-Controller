@@ -212,6 +212,11 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
   云端那一侧见 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.2。
   **网页版现在会先把每条记录写入浏览器本地存档、再回确认帧**，并在读取前提示队列将被消费，
   可取消；存档可一键导出 JSON / CSV（Excel 直开），刷新或误关页面都不会丢。
+  若某条记录显示「**时间未知**」，说明它写于设备时钟未对时期间 —— 此时固件写的是
+  「1970 起算的秒数」而不是墙钟时间（机制见 [docs/firmware-analysis.zh-CN.md](docs/firmware-analysis.zh-CN.md) §5）。
+  连接时会用 `DB 04 02` 自动对时，之后写入的记录都是真实时间；
+  这类记录多来自改造 USB 常供电之前、或拔电重启后尚未对时的时段，且因为日志是待同步队列，
+  会一直积压到被读取为止。导出文件里的「原始值」保留设备原始字段，可用于追溯。
   脚本 `--logs` / `--logs-all` 仍是纯文本输出，需要留档请自行重定向到文件；
 - **设备名改不了**：`get_device_config` / `update_device_config` 都是云端接口，
   名字只存服务器和手机本地，**从来没写进设备**。服务器下线后无法修改；

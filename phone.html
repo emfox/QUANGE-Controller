@@ -173,7 +173,10 @@
   </div>
   <p class="hint" style="margin:12px 0 0">
     存档保存在本浏览器（<code>localStorage</code>），不随页面更新丢失；清除浏览器数据会一并清除，
-    重要数据请定期导出。CSV 用 UTF-8 BOM 编码，Excel 可直接打开；同一时刻的多条记录会按时间与状态去重。
+    重要数据请定期导出。CSV 用 UTF-8 BOM 编码，Excel 可直接打开。<br>
+    <b>「时间未知」是什么</b>：设备时钟未对时（RTC 从 0 起算）期间写入的记录，时间戳是
+    「从 1970 起算的秒数」而不是墙钟时间，所以显示为运行时长或「RTC 归零」。连接时会自动对时，
+    对时之后写的记录都是真实时间。导出文件里的「原始值」保留了设备的原始字段，可用于追溯。
   </p>
 </div>
 
@@ -655,17 +658,23 @@
   const CLOCK_FLOOR = 1600000000;    // below this the record is an unset-clock artifact
   const LOG_MAX     = 200;           // safety stop; the queue is never this long
 
-  let archive = [];                  // { ts, dur, type, st, seen } -- ts === null if unknown
+  let archive = [];                  // { ts, raw, dur, type, st, seen } -- ts null if clock unset
   let session = [];                  // this run, for the visible list
   let readingLogs = false;
 
-  // localStorage is untrusted: anything read back must be re-validated, because a
-  // malformed value would abort the read loop in the middle of a destructive pass.
+  // Firmware analysis §5: while the RTC is unset the device stamps the log with
+  // "seconds since 1970", i.e. a small number that is NOT a wall-clock time. Once
+  // time has been synced (DB 04 02) it writes real Unix seconds. Keeping the raw
+  // value matters: 0 means the RTC had just reset, while e.g. 198000 means it had
+  // been counting for ~55 h without a sync -- two very different stories.
   function isValidLog(r) {
     if (!r || typeof r !== "object") return false;
     const okTs = r.ts === null ||
       (Number.isInteger(r.ts) && r.ts >= 0 && r.ts < UNKNOWN_TS);
-    return okTs &&
+    // `raw` is optional so archives written by the previous version still load.
+    const okRaw = r.raw === undefined ||
+      (Number.isInteger(r.raw) && r.raw >= 0 && r.raw < UNKNOWN_TS);
+    return okTs && okRaw &&
       Number.isInteger(r.dur) && r.dur >= 0 && r.dur <= 0xFFFF &&
       Number.isInteger(r.type) && r.type >= 0 && r.type <= 0xFF &&
       Number.isInteger(r.st) && r.st >= 0 && r.st <= 0xFF;
@@ -676,7 +685,7 @@
       const raw = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || "[]");
       if (!Array.isArray(raw)) return [];
       const clean = raw.filter(isValidLog)
-        .map(r => ({ ts: r.ts, dur: r.dur, type: r.type, st: r.st,
+        .map(r => ({ ts: r.ts, raw: r.raw, dur: r.dur, type: r.type, st: r.st,
                      seen: typeof r.seen === "number" ? r.seen : Date.now() }));
       if (clean.length !== raw.length)
         log("已忽略本地存档中不合法的记录（" + (raw.length - clean.length) + " 条）");
@@ -700,21 +709,41 @@
   // Both look identical to an already-archived record, so a duplicate is simply
   // skipped for display; what matters is that we still ACK it so the device
   // advances instead of resending forever.
-  // A genuine second run starting at the same second with the same duration is
-  // indistinguishable from these, and practically impossible for this device.
+  //
+  // Identity is the RAW 32-bit field, never the normalised ts. Several unset-clock
+  // records collapse to ts=null while being distinct runs (198000 s vs 253200 s);
+  // comparing only duration/type/state would call the second one a duplicate, skip
+  // it, and still ACK it -- destroying a record we never stored.
+  const identOf = r => r.raw !== undefined ? r.raw : (r.ts !== null ? r.ts : null);
+
   function alreadyArchived(r) {
+    const k = identOf(r);
     return archive.some(a =>
-      a.dur === r.dur && a.type === r.type && a.st === r.st &&
-      (a.ts !== null && r.ts !== null ? a.ts === r.ts : a.ts === null && r.ts === null));
+      a.dur === r.dur && a.type === r.type && a.st === r.st && identOf(a) === k);
   }
 
   function archiveAdd(r) {
-    archive.push({ ts: r.ts, dur: r.dur, type: r.type, st: r.st, seen: Date.now() });
+    archive.push({ ts: r.ts, raw: r.raw, dur: r.dur, type: r.type, st: r.st,
+                   seen: Date.now() });
     if (archive.length > ARCHIVE_MAX) archive = archive.slice(-ARCHIVE_MAX);
+  }
+
+  // Unset-clock records carry a "seconds since 1970" counter rather than a wall
+  // clock (firmware-analysis §5). Show it in hours of uptime instead of a bogus
+  // 1970 date, so the user can tell "RTC just reset" from "ran 55 h unsynced".
+  function clockNote(r) {
+    const v = identOf(r);
+    if (r.ts !== null || typeof v !== "number") return "";
+    if (v === 0) return "RTC 归零";
+    if (v >= 3600) return `未对时 · 已运行 ${(v / 3600).toFixed(v < 36000 ? 1 : 0)}h`;
+    if (v >= 120) return `未对时 · 已运行 ${Math.round(v / 60)}分钟`;
+    return `未对时 · ${v}秒`;
   }
 
   const logTimeText = r => r.ts !== null ? fmtTime(r.ts) : "时间未知";
   const logStateText = r => r.st === 1 ? "结束" : "开始";
+  // type 0 = scheduled run, 1 = manual button / power-on run (protocol §5.3)
+  const logTriggerText = r => r.type === 1 ? "手动·上电" : "定时";
 
   function renderLogs() {
     const box = $("logList");
@@ -734,10 +763,14 @@
       // 3600-multiple values), so they are not wall-clock times. USB-powered units
       // never lose the clock and no longer produce these (firmware-analysis §5).
       t.textContent = logTimeText(r);
-      if (r.ts === null) t.className = "unknown";
+      if (r.ts === null) {
+        t.className = "unknown";
+        const note = clockNote(r);
+        if (note) t.textContent += "（" + note + "）";
+      }
       const u = document.createElement("span");
-      u.style.cssText = "color:var(--sub);font-size:13px";
-      u.textContent = fmtDur(r.dur);
+      u.style.cssText = "color:var(--sub);font-size:13px;white-space:nowrap";
+      u.textContent = fmtDur(r.dur) + " · " + logTriggerText(r);
       const st = document.createElement("span");
       st.style.cssText = "color:var(--sub);font-size:13px;width:32px;text-align:right";
       st.textContent = logStateText(r);
@@ -778,9 +811,13 @@
       const t = document.createElement("span");
       t.className = "grow" + (r.ts === null ? " unknown" : "");
       t.textContent = logTimeText(r);
+      if (r.ts === null) {
+        const note = clockNote(r);
+        if (note) t.textContent += "（" + note + "）";
+      }
       const u = document.createElement("span");
-      u.style.cssText = "color:var(--sub);font-size:13px";
-      u.textContent = fmtDur(r.dur) + " · " + logStateText(r);
+      u.style.cssText = "color:var(--sub);font-size:13px;white-space:nowrap";
+      u.textContent = fmtDur(r.dur) + " · " + logTriggerText(r);
       d.appendChild(t); d.appendChild(u);
       box.appendChild(d);
     });
@@ -816,13 +853,20 @@
       schema: "quange-log-archive/1",
       exported_at: new Date().toISOString(),
       source: "Web Bluetooth BD 08 05 / BD 08 06 pending-sync queue",
-      note: "ts is a Unix timestamp (s); null means the record was written before the RTC was synced.",
+      note: "ts is a Unix timestamp (s) and is null when the record was written before " +
+            "the RTC was synced; raw_ts keeps the device's original 32-bit field, i.e. " +
+            "seconds since 1970 while the clock was unset (firmware-analysis §5).",
       count: archive.length,
       records: archive.map(r => ({
         ts: r.ts,
         time: r.ts !== null ? fmtFull(r.ts) : null,
+        raw_ts: identOf(r),
+        raw_ts_hex: typeof identOf(r) === "number"
+          ? "0x" + identOf(r).toString(16).toUpperCase().padStart(8, "0") : null,
+        clock_note: clockNote(r) || null,
         dur_s: r.dur,
         type: r.type,
+        trigger: logTriggerText(r),
         st: r.st,
         st_text: logStateText(r),
         archived_at: new Date(r.seen).toISOString()
@@ -837,14 +881,21 @@
       const s = String(v);
       return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const head = ["时间", "Unix秒", "时长(秒)", "类型", "状态码", "状态", "导入时间"];
+    const head = ["时间", "Unix秒", "原始值", "原始值HEX", "时钟状态",
+                  "时长(秒)", "触发", "类型码", "状态码", "状态", "导入时间"];
     const lines = [head.join(",")];
-    archive.forEach(r => lines.push([
-      r.ts !== null ? fmtFull(r.ts) : "时间未知",
-      r.ts !== null ? r.ts : "",
-      r.dur, r.type, r.st, logStateText(r),
-      new Date(r.seen).toISOString()
-    ].map(esc).join(",")));
+    archive.forEach(r => {
+      const id = identOf(r);
+      lines.push([
+        r.ts !== null ? fmtFull(r.ts) : "时间未知",
+        r.ts !== null ? r.ts : "",
+        typeof id === "number" ? id : "",
+        typeof id === "number" ? "0x" + id.toString(16).toUpperCase().padStart(8, "0") : "",
+        clockNote(r) || (r.ts !== null ? "已对时" : ""),
+        r.dur, logTriggerText(r), r.type, r.st, logStateText(r),
+        new Date(r.seen).toISOString()
+      ].map(esc).join(","));
+    });
     // BOM so Excel detects UTF-8 instead of mangling the Chinese headers.
     download(`quange-logs-${stamp()}.csv`, "\uFEFF" + lines.join("\r\n") + "\r\n",
              "text/csv;charset=utf-8");
@@ -887,10 +938,12 @@
       if (typeof r.ts !== "number" || isNaN(r.ts)) { lastErr = "回包解析失败"; break; }
 
       // Normalise before it touches the archive: an unset clock yields a small,
-      // 3600-multiple value that is not a wall-clock time, so store it as null
-      // rather than as a date in 1970.
+      // 1970-based counter that is not a wall-clock time, so ts becomes null.
+      // The raw value is kept alongside it -- it is the only way to tell one
+      // unset-clock record from another (and to reason about why it happened).
       const rec = {
         ts: r.ts > CLOCK_FLOOR ? r.ts : null,
+        raw: r.ts,
         dur: r.dur, type: r.type, st: r.st
       };
 
