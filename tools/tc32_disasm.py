@@ -207,6 +207,35 @@ def linear(rom, start, end):
     return out
 
 
+REGIONS = [
+    ("boot", 0x0000, 0x00B0), ("init/main", 0x00B0, 0x2F8E),
+    ("app ctrl", 0x4000, 0x5000), ("dispatch", 0x5000, 0x5900),
+    ("storage", 0x5900, 0x6600), ("driver", 0x6600, 0x7200),
+    ("libs", 0x7200, 0x7800), ("ble cb", 0x7800, 0x8800),
+    ("rf/stack", 0x8800, 0xA000), ("stack b", 0xA000, 0xB000),
+    ("glue", 0xB000, 0xB800), ("ptrtbl", 0xB800, 0xC000),
+    ("gpio", 0xC000, 0xCD00),
+]
+
+
+def region_report(ins):
+    """Per-region call/IO fingerprint, used to draw the module boundaries."""
+    for name, lo, hi in REGIONS:
+        seg = [x for x in ins if lo <= x[0] < hi]
+        if not seg:
+            continue
+        outs = Counter((x[3]["target"] & ~0x7FF) for x in seg if x[3].get("flow") == "call")
+        ios = Counter(x[3]["value"] for x in seg
+                      if x[3].get("value") is not None and 0x800000 <= x[3]["value"] < 0x810000)
+        rams = Counter(x[3]["value"] & ~0xFF for x in seg
+                       if x[3].get("value") is not None and 0x840000 <= x[3]["value"] < 0x850000)
+        print(f"{name:10} 0x{lo:05x}-0x{hi:05x} ins={len(seg):5d} "
+              f"calls={sum(1 for x in seg if x[3].get('flow') == 'call'):4d}")
+        print("   out->", dict(sorted(outs.most_common(4))))
+        print("   io   ", ", ".join(f"{hex(k)}x{v}" for k, v in ios.most_common(5)) or "-")
+        print("   ram  ", ", ".join(f"{hex(k)}x{v}" for k, v in rams.most_common(4)) or "-")
+
+
 def region(v):
     for name, (lo, hi) in KNOWN.items():
         if lo <= v <= hi:
@@ -229,6 +258,7 @@ def main():
     ap.add_argument("--functions", action="store_true", help="function and call graph summary")
     ap.add_argument("--xrefs", action="store_true", help="literal pool data references")
     ap.add_argument("--tables", action="store_true", help="function pointer tables")
+    ap.add_argument("--regions", action="store_true", help="per-region call/IO fingerprint")
     args = ap.parse_args()
 
     rom = Path(args.rom).read_bytes()
@@ -247,6 +277,9 @@ def main():
         return
 
     ins = linear(rom, args.start, min(args.end, len(rom)))
+    if args.regions:
+        region_report(ins)
+        return
     stats = Counter(x[2].split("\\")[0].split("%")[0].strip() for x in ins)
     calls = [(a, i["target"]) for a, _, _, i in ins if i.get("flow") == "call"]
     lits = [(a, i["literal"], i.get("value")) for a, _, _, i in ins if "literal" in i]

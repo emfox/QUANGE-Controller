@@ -115,6 +115,8 @@ Full field descriptions, reply parsing and the init sequence:
     ├── protocol.en.md                Protocol (English)
     ├── ota-dump.zh-CN.md              ROM dump procedure（Chinese, ⚠️ irreversible）
     ├── ota-dump.en.md                 ROM dump procedure (English)
+    ├── firmware-code-map.zh-CN.md     固件代码结构图（Chinese）
+    ├── firmware-code-map.en.md        Firmware code map (English)
     ├── firmware-analysis.zh-CN.md     原厂固件静态分析（Chinese）
     ├── firmware-analysis.en.md        Vendor firmware analysis (English)
     ├── firmware-structure.zh-CN.md    原厂固件功能结构（Chinese）

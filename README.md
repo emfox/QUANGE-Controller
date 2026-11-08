@@ -109,6 +109,8 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
     ├── protocol.en.md                 Protocol (English)
     ├── ota-dump.zh-CN.md              ROM 导出复现步骤（中文，⚠️ 不可逆）
     ├── ota-dump.en.md                 ROM dump procedure (English)
+    ├── firmware-code-map.zh-CN.md     固件代码结构图（函数级，中文）
+    ├── firmware-code-map.en.md        Firmware code map (English)
     ├── firmware-analysis.zh-CN.md     原厂固件静态分析（中文）
     ├── firmware-analysis.en.md        Vendor firmware analysis (English)
     ├── firmware-structure.zh-CN.md    原厂固件功能结构 / 反汇编（中文）

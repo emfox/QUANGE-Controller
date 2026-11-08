@@ -33,17 +33,17 @@ That makes the listing readable: `tmov r1, #219` (= `0xDB`) and `[r6, #2]` come 
 
 | Range | Kind | Evidence |
 | --- | --- | --- |
-| `0x000–0x027` | Firmware header | Length at `0x18` |
-| `0x028–0x0A7` | 64 x halfword `0x06C0` | Decodes as `tmov %D,%S`; vector semantics unclear |
-| `0x0A8–0x2FFF` | Startup + Telink SDK library code | Dense calls/literals, no blank pages |
-| **`0x3000–0x3FFF`** | **4 KiB near-zero region** | **0 call sites, 0 literal refs** — not code |
-| `0x4000–0x6FFF` | Application: advertising, BLE/GATT, command handling | Highest call density, see §3 |
-| `0x7000–0xCBFF` | Application logic + SDK (incl. event handlers) | Uniform code density |
-| `0xCC00–0xD0FF` | Advertising/name/GATT attribute data and code referencing it | Static analysis §3 |
-| `0xD104–0xD24C` | **Event callback table**, 83 slots | §4 |
-| `0xD250–0xD2E4` | Config constants + **56 B unstructured block** | §6 |
-| `0xD31C–0xD390` | **Jump/dispatch table**, 30 slots | §4 |
-| `0xD3A4–0xD3E4` | Strings, constants, 4 B checksum | — |
+| `0x00000–0x0001F` | firmware header; `0x00` is `tj.n 0xB0` | length field `0x18` = `0xD3E4` |
+| `0x00020–0x000AF` | **IRQ stub + 64 nops** | `0x20` writes `0x80006F=0x81` and returns; `0x28–0xA7` are all `tmov r8,r8` (`0x06C0`) — alignment padding, **not a vector table** |
+| `0x000B0–0x02F8C` | boot, init, base library, **main** | `0x136` calls `0x760`, then spins forever |
+| `0x02F8E–0x02FFF` | an ASCII string plus zero padding | code ends here |
+| **`0x03000–0x03FFF`** | **4 KiB near-zero region** | 0 calls, 0 literals — not code |
+| `0x04000–0x0CCD6` | app layer + BLE callbacks + BLE stack | region breakdown in [the code map](firmware-code-map.en.md) §3 |
+| `0x0CCE0–0x0D0FF` | adv name / SCAN RSP / GATT attribute table | static analysis §3 |
+| `0xD104–0xD24C` | **event callback table**, 83 slots -> all inside `0x7800–0x7FFF` | §4 |
+| `0xD250–0xD2E4` | config constants + **56-byte unstructured block** | §6 |
+| `0xD31C–0xD390` | **pointer table**, 30 slots -> all inside `0x0B882–0x0BF52` | §4 |
+| `0xD3A4–0xD3E4` | strings, constants, 4-byte checksum tail | — |
 
 ## 2. Functions and call graph
 
