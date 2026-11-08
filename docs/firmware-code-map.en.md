@@ -670,8 +670,8 @@ both the RF init and the app's start/stop sequences write into it.
 `+0x04` itself stays open: values `0` / `3` / `15` / `0x40`, written as `15` / `0` on the app's
 start/stop, with `0xAFE8` comparing against `0x40`. Under a low-power reading the most natural
 meaning is **"allowed wakeup sources / sleep-level mask"** (`15` = all four sources, `0` = none),
-but that is **not confirmed**: verifying it needs a current measurement in the corresponding state,
-or a debugger read of that byte.
+but that is **not confirmed**: verifying it needs a debugger read of that byte
+(the protocol side cannot read RAM).
 
 ---
 
@@ -908,7 +908,7 @@ r4 = f1DC(r4, 60)        ; minutes   → quotient
 
 ### 15.5 ⚠️ `0x800540` / `0x800548` are the **TRNG**, not GPIO
 
-The previous version treated this pair as the "disinfection / UV pins". **Wrong.** `0xC80C` is explicit:
+The previous version treated this pair as the "disinfection pins". **Wrong.** `0xC80C` is explicit:
 
 ```
 u8[0x800540] = 0
@@ -932,13 +932,19 @@ Reset, poll a ready bit, read four words for entropy — standard TRNG usage. `0
 The 26 P3 sites live in 13 functions and are all read-modify-write (`tloadrb → tbclr/tbor → tstorerb`).
 Bits that can be named:
 
-| Bit | Evidence | Inferred role |
+| Bit | Evidence | What static analysis actually shows |
 | --- | --- | --- |
-| 2 | `0x5FD0` clears it on shutdown | actuator 1 (always off when stopping) |
-| 4 | `tbclr #16` at `0x4B98` / `0x4D82` / `0x5FCC` | actuator 2 (three shutdown paths clear it) |
-| 7 | set near `0x4DD4`, cleared by `0x4B60` / `0x5F94` | actuator 3 (pairs with bit 2) |
+| 2 | `0x5FD0` clears it on shutdown | always off when stopping; moves together with bit 7 |
+| 4 | `tbclr #16` at `0x4B98` / `0x4D82` / `0x5FCC` | cleared on all three shutdown paths |
+| 7 | set near `0x4DD4`, cleared by `0x4B60` / `0x5F94` | pairs with bit 2; cleared with P2 bit 4 by `0x64D0` |
 
 P0 bit 6 = button input (`tand 0x40` in `0x43A0`), unchanged from the previous version.
+
+> **Do not read these as parallel "UV / fan / pump" actuators.** The device has exactly one function —
+> disinfection — and these four bits are electrical branches of the same assembly (tube drive, boost /
+> rail enable, status indicator). The firmware never offers a mode that drives one branch alone; they
+> only act as a group at power-up, shutdown and teardown. Which bit is which branch cannot be derived
+> statically — it has to be measured on the unit.
 
 ### 15.7 Two small things
 
@@ -985,7 +991,7 @@ is **the wall-clock moment this session started**.
 This also settles the unit question behind §8: that pair is in **seconds, not ticks**.
 The session duration is not in either field — it is the profile threshold in `0x6538`: `+0x60` is a
 profile index, `0x50` onwards is the per-profile second table, and `+0x35 != 0` selects a fixed
-180-second profile. Teardown always clears P3 bit 7 and
+180-second profile — which matches the measured "about 3 minutes" (protocol §8.7). Teardown always clears P3 bit 7 and
 P2 bit 4 — which is where those two actuator bits from §15.6 end up.
 
 ---
@@ -1000,8 +1006,9 @@ the `0x3000` hole and the `0x6538` timer). What is left needs the device or a de
   but which IRQ uses it is still open.
 - What the four callbacks `0x0ED0` / `0x1378` / `0x7520` / `0x13E8` handle.
 - Whether `+0x04` of `0x843C0C` really is a wakeup-source / sleep-level mask (§13.7), and what
-  `16/64/80` at `+0x05`, `0`/`3` at `+0x0E`, `0x43` at `+0x21` mean. Needs a current measurement
-  or a debugger read.
+  `16/64/80` at `+0x05`, `0`/`3` at `+0x0E`, `0x43` at `+0x21` mean. The protocol has no read-memory
+  command and the log only records business events, so this group **needs an SWD debugger**, or a
+  build that copies those bytes into the log.
 - `+9` of `0x84358C` is provably constant 0, but which business path sets `+2` at each of its four
   sites is not stitched together yet.
 - Who reads the two 20-byte constants that `0x5064` copies into the stack from `0xCD44` / `0xCD54`.
@@ -1011,5 +1018,7 @@ the `0x3000` hole and the `0x6538` timer). What is left needs the device or a de
 - `0x52C`: `0x800061 = 32` then `0` is a reset/trigger sequence, followed by a 400-tick wait and a
   clear of the first eight words of `0x843534`, then a write to `0x800B08`. Classified as
   "log-area reset + peripheral trigger", but neither register is identified.
-- Which of the P3 bits (2 / 4 / 7) and P2 bit 4 correspond to disinfection, UV, fan and pump.
-  Static analysis only shows **which bits switch together** — the physical mapping must be measured.
+- Which electrical branch each of the four disinfection control bits (P3 bit 2 / 4 / 7, P2 bit 4)
+  drives. Static analysis only shows **which bits switch together and in what order**; the physical
+  mapping must be measured (the device has a single disinfection function — there is no separately
+  addressable fan or UV subsystem).

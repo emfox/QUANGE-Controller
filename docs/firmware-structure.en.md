@@ -201,7 +201,7 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
   (slot duration in seconds to minutes). Not yet classified.
 - What the `0x6309` and `0x6539` events in the 3-entry software timer array at `0x842F34` (`0x41B4`)
   stand for — `0x5F90` cancels them first and `0x41B4` re-arms them with a `0x0F4240` interval.
-- `0x800Fxx` / `0x80000C/D` register roles; which GPIO drives the UV/disinfection load.
+- `0x800Fxx` / `0x80000C/D` register roles; how many GPIO branches the disinfection load uses and what each drives (static analysis only shows group switching).
 - No symbol table: functions can only be labelled by address and reference, not named automatically.
 
 ## 8. Suggested next steps
