@@ -733,9 +733,16 @@ was restored and read back after all write cases** (last row).
 > Items confirmed on real hardware are in §8.2 – §8.5. Only **genuinely open** questions that
 > are worth further effort remain below.
 
-- **Exact Telink part number** — undeterminable at the BLE layer (the PnP ID is an SDK
-  default constant, see §1). This unit has been opened for the USB mod, so **reading the
-  silkscreen on the main IC settles it**; that is the only route.
+- **Exact Telink part number** — exhausted at the BLE layer: `180A` exposes only `2A50`,
+  and PID `0x8266` is a hard-coded Telink SDK default; there is no `2A27` Hardware
+  Revision either. The user only replaced the batteries with a USB power lead —
+  **the case cannot be opened**, so the silkscreen route is unavailable too.
+  ⚠️ This blocks `TLSR825x_OTA_Flash_Hacker` ([live-test](live-test-2026-10-29.md) §7):
+  `BLE-Hacker.bin` is built only for TLSR8258, the local part is unknown, and there is
+  no vendor firmware to roll back to. Source check on 2026-11-08: TelinkMiFlasher's
+  UUIDs / `01ff` handshake / `02ff`+count+`~count` end frame are **the same protocol
+  family** as this vendor app (only 32 B vs 16 B chunks), so the tool would very
+  likely write successfully — the risk is real, not "it probably won't flash anyway".
 - **Do later scheduled points keep the log readable?** — confirmed once (11-08 02:00,
   see §8.5); USB power needs no long-press restart. What is still missing is a **second
   and a multi-day** repetition. The next natural scheduled point is 11-08 15:00 — just
