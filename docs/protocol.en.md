@@ -711,6 +711,9 @@ was restored and read back after all write cases** (last row).
 | Real-clock run (command-triggered) | `DB 02 04 01` for 209 s, then read the log | still `BD0805 FFFFFFFF` | **a command-triggered run writes no log**; it says nothing about the queue |
 | Scheduled point recheck | 07:09, bare `DB 01 05` after the 02:00 run | `BD0805 6AEF6720 00B4 00 00`, then `BD0806 FFFFFFFF` after ACK | **a scheduled run writes a record and the log is readable again** |
 | Advertising name | 60 s scan → connect → 60 s scan | `kHID` was only the first packet of each round (1/121, 1/98), all others `QUANGE-WY020702` | **not an alternation; startup default then fixed** |
+| Post-reboot read-only check | 10:44 long-press reboot, GATT inventory + every readable value | `180A` has only `2A50` (`028A2466820100`); OTA char reads `00`; battery 99%; `2A00` = `Hi-YM01-12DC2009BB6` | **no chip clue at the BLE layer**, matches 10-29; dumper verdict unchanged |
+| State after reboot | `DB 04 02` + real time | `BD0E02 … 6AF01DF0 6AEFE207`: idle, `next run` 15:00, device clock 10:44:23 | **a long-press reboot on USB power does not lose the clock** |
+| Power-on run log | bare `DB 01 05` after reboot (**no ACK**) | `BD0805 00000000 00B4 01 00` | **second observation** of `type=1` / `ts=0`; `rec_type=00` (start), record left unread in the queue |
 
 > **Read-once logs vs USB power**: the log is a pending-upload queue (§5.3) — each ACK
 > consumes one record, and an emptied queue cannot be rewound, but **no power cycle is
@@ -756,7 +759,8 @@ was restored and read back after all write cases** (last row).
 
 | Item | Why closed |
 | --- | --- |
-| How many logs a power cut loses / does it affect the queue / does power-on write `type=1` / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios no longer occur. The old "power cut loses records" inference is withdrawn (§5.3) |
+| How many logs a power cut loses / does it affect the queue / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios no longer occur. The old "power cut loses records" inference is withdrawn (§5.3) |
+| Does the power-on auto run write a `type=1` log? | **Measured twice** (11-07 / 11-08 long-press reboots). A long-press reboot still happens on USB power, so this is not a "can no longer recur" item — see §8.5 |
 | Mapping class-B log time base (exact multiples of 3600) | Class B was a product of a **lost / unsynced clock**; on USB power the clock never drops, so it cannot recur. Why two time bases existed is still unknown, but has no practical impact |
 | Does the state reply vanish during the power-on run? | Disproven: 6/6 replies during a run (§8.5). The earlier single zero-reply case was likely a not-yet-ready device |
 | Button / body-radar notifications | No control or configuration interface for either exists in the protocol; a positive result could not control anything |
