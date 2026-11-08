@@ -517,14 +517,158 @@ The evidence around `0x843C0C` points **both ways**:
   (15/0) directly, immediately followed by a register switch like `0x7484(64,0,1)`; and the
   application never reads `+0x04` back.
 
-Both readings are consistent, and static analysis has reached its limit. **Conclusion: `+0x04`
-correlates strongly with "load on/off", but whether it is a link-layer step number or an actuator
-enable bit can only be settled on hardware** — e.g. probe the register bit that `0x7484` touches, or
-change `+0x04` and watch the lamp.
+Both readings are consistent, and static analysis has reached its limit at this layer.
+
+> **2026-11-08 addendum (§13.7 rewrites this conclusion)**: after reading all of `0xA000–0xB000`,
+> `0x843C0C` is neither a link-layer context nor actuator state — it is the **timer / low-power
+> scheduling block**, holding the timer deadline, the wakeup compare base, the last-activity tick and
+> several durations. Neither reading above survives; what `+0x04` means is still open.
 
 ---
 
-## 13. Numbers and reproduction
+## 13. `0xA000–0xB000`: the scheduling / low-power layer
+
+The previous section framed `0x843C0C` as "link-layer context *or* actuator state". After reading the
+whole layer, **neither is right**: it is the **timer / low-power scheduling block**. Evidence below.
+
+### 13.1 Region map (16 entries)
+
+| Entry | Size | Static callers | Reading |
+| --- | --- | --- | --- |
+| `0xA014` | 80 | `0x4BE0` / `0x4CDE` / `0x4DCE` / `0xA312` | writes one byte (`+0x77`) into the link context `0x843B20`, returns `0x80` / `0x3A` / `0`; returns `0x80` immediately when not connected |
+| `0xA064` | 80 | `0xA492` / `0xA622` | not read in detail |
+| `0xA0B4` | 4 | `0xA6CC` | `tjex r3` stub |
+| `0xA0B8` | 1,540 | **none** | the largest block here, entered indirectly |
+| `0xA6BC` | 212 | **none** | registered by `0x9A60` (odd pointer `0xA6BD`) |
+| `0xA790` | 128 | `0xA882` / `0xAA82` | not read in detail |
+| `0xA810` | 8 | **none** | registered by `0x9A48` (`0xA811`) |
+| `0xA818` | 520 | **none** | not read in detail |
+| `0xAA20` | 344 | `0x2686` | **link-event timing** (1.25 ms-unit window maths on `0x843A80` / `0x843B20`) |
+| `0xAB78` | 64 | `0x293A` | not read in detail |
+| `0xABB8` | 372 | `0xAD3E` | not read in detail |
+| `0xAD2C` | 188 | **none** | registered by `0x9A66` (`0xAD2D`) |
+| `0xAD8C` | 92 | `0x4752` / `0x4864` | **scheduler block init** |
+| `0xADE8` | 214 | `0x2B6A` | **arms the tick interrupt** (§13.5) |
+| `0xAEC8` | 302 | `0x1E96` | same shape as the above |
+| `0xAF9C` | 4 | `0xAEE0` | `tjex r3` stub (the third one) |
+
+`0xAFA0` / `0xAFB0` / `0xAFBC` / `0xAFDC` / `0xAFE8` are the setter group right after them (§13.6).
+
+Three `tjex r3` stubs (`0xA0B4` / `0xAF9C` / `0x2DF0`) plus `0x5060` in the main loop show that this
+firmware **calls indirectly all over the place** — a static call graph inherently misses those edges.
+
+### 13.2 Fields of `0x843C0C`
+
+| Offset | Type | Meaning | Evidence |
+| --- | --- | --- | --- |
+| `+0x00` | u32 | initial `0x2995` (10645) | written by `0xAD8C`; `0x1C6C` tests for non-zero |
+| `+0x04` | byte | **mode / mask**, values `0` / `3` / `15` / `0x40` | written by `0xADDC`; `0xAFE8` compares against `0x40` |
+| `+0x05` | byte | values `16` / `64` / `80`, **no reader found** | written by `0xADB8` |
+| `+0x0E` | half | values `0` / `3`, **no reader found** | written by `0xADC4` |
+| `+0x14` | u32 | **duration A, in milliseconds** (stored as `x16000` ticks) | written by `0xAFBC`; default `1,600,000` = 100 ms |
+| `+0x18` | u32 | **duration B, in milliseconds** | written by `0xAFBC`; default 100 ms, set to 30 ms at init |
+| `+0x1C` | u32 | **short duration, in microseconds** (stored as `<<4` ticks) | written by `0xAFDC`; default `8000` = 500 us, set to 200 us |
+| `+0x20` | u32 | base + offset (the computed next instant) | written by `0xADE8` / `0xAEC8` |
+| `+0x22` | byte | **timer pending** (1 = yes, 0 = no) | written by `0xAFA0` |
+| `+0x28` | u32 | **tick of the next software timer** (0 = none) | written by `0xAFA0`, called from `timer_add` / `timer_poll` |
+| `+0x2C` | u32 | **tick of the last activity** | IRQ14 uses it for the timeout test |
+| `+0x34` | u32 | **base tick**, loaded into the timer compare register | written by `0xADE8`; `0x1E6C` does `u32[0x800744] = u32[0x843C40]` directly |
+
+The unit of `+0x14` / `+0x18` is derived, not guessed: inside `0xAFBC`
+`r2 = (a<<5) - a = 31a` -> `r2 <<= 2` = `124a` -> `r0 = r2 + a = 125a` -> `r0 <<= 7` = **`16000a`**,
+and 16,000 ticks is exactly 1 ms.
+
+### 13.3 The timer-hook registration chain
+
+```
+main (0x7E2) -> 0x437C()  ->  0xAFB0(0x423D)      ; 0x423D = 0x423C + 1
+                                 +- u32[0x844B48] = 0x423C   ; = timer_poll
+
+stack (0x2B14): r3 = u32[0x844B48]
+                if (r3) 0x2DF0(1)                 ; 0x2DF0 is a tjex r3 stub
+```
+
+So `0x844B48` is the **timer-poll hook**: the application registers it, the stack calls it every
+round. That also explains why `0x423C` (timer_poll) has no ordinary static caller — it only lives in
+that slot.
+
+### 13.4 What `timer_poll` decides, and the two thresholds
+
+```
+0x423C
+  now = [0x800740]; cnt = u32[0x842F34+0x30]
+  if (cnt == 0) { 0xAFA0(0, 0); return }               ; nothing armed -> report "no pending timer"
+  if ((now + 0x800) - u32[0x842F34+4] > 0x3D08FFF) return
+  walk the slots: call fn for expired deadlines, re-arm with (interval << 4)
+  ...
+  r0 = u32[0x842F34+4]                                 ; earliest deadline
+  if (r0 - now <= 0x02DC6BFF) 0xAFA0(r0, 1)            ; only if < 3 s
+  else                        0xAFA0(0, 0)
+```
+
+Both thresholds matter: `0x3D08FFF` = 0x3D09000-1, about **4 s**, asks "is this deadline too far in
+the past"; `0x02DC6BFF` = 48,000,000-1 = **3 s**, so the wakeup is only armed when the next deadline
+is within three seconds. **This is textbook "decide whether to sleep with a timer wakeup".**
+
+### 13.5 Arming the tick interrupt
+
+```
+0x1E6C  u32[0x800744] = u32[0x843C40]      ; +0x34 -> timer compare register
+        right after writing 0x800F01=1 / 0x800F20=0xFFFF / 0x800648 |= 0x100000
+
+0xADE8 / 0xAEC8
+  r3 = u32[+0x34]
+  r2 = r3 + (-56000) - u32[0x843B20+0x2C] - [0x800740]
+  u32[+0x34] = r3 ; u32[+0x20] = r3 + u32[0x843B20+0x40]
+  u32[0x800744] = r3                        ; the trigger point
+```
+
+`-56000` ticks = **-3.5 ms**, i.e. "wake up 3.5 ms early".
+
+### 13.6 The six setters
+
+| Function | Action | Call site / arguments |
+| --- | --- | --- |
+| `0xAFA0(a, b)` | `u32[+0x28] = a`, `byte[+0x22] = b` | `0x41E6` / `0x42D2` / `0x435A` (`b=1`), `0x42DE` / `0x4366` (`a=0,b=0`) — all from timer code |
+| `0xAFB0(a)` | `u32[0x844B48] = a` | `0x4380`, `a = 0x423D` (registers timer_poll) |
+| `0xAFBC(a, b)` | `u32[+0x14] = a ms`, `u32[+0x18] = b ms` | `0x4872`, `(50, 30)` |
+| `0xAFDC(a)` | `u32[+0x1C] = a us` | `0x487A`, `200` |
+| `0xAFE8()` | if `byte[+0x04] == 0x40`: `0x800078 |= 0x100000`, `byte[0x80006F] = 0x80`; then `byte[0x8439C0] = 1` | `0x2A30` |
+| `0x74EC(a)` | `reg0x3C &= ~1`; `reg0x2D = 0x15`; `reg0x05 = 0x02`; `reg0x2C = a \| 0x1F` | peripheral power-up sequence |
+
+`0xAD8C` (the initialiser) just lays down the defaults:
+
+```
+u32[+0x00] = 0x2995 ; half[+0x0E] = 0xFFFF
+u32[+0x14] = u32[+0x18] = 0x186A00      ; 100 ms
+u32[+0x1C] = 8000                        ; 500 us
+byte[+0x21] = 67
+```
+
+### 13.7 Update to §12.7 — the conclusion changed
+
+§12.7 listed two readings for `+0x04` side by side (a link-layer step number vs an actuator enable).
+The evidence here rules out **both**:
+
+- the same struct holds the **timer deadline (`+0x28`)**, the **wakeup compare base (`+0x34`)**,
+  the **last-activity tick (`+0x2C`)**, **two millisecond durations (`+0x14`/`+0x18`)** and one
+  microsecond duration (`+0x1C`);
+- everything that writes it (`0xAFA0` / `0xAFB0`) comes from **timer code** (`0x41xx–0x43xx`), and
+  the only reader, IRQ14, does a timeout test.
+
+=> **`0x843C0C` is the timer / low-power scheduling block** — not actuator state, not a link-layer
+context. It is the "scheduling base shared by the application and the stack", which is exactly why
+both the RF init and the app's start/stop sequences write into it.
+
+`+0x04` itself stays open: values `0` / `3` / `15` / `0x40`, written as `15` / `0` on the app's
+start/stop, with `0xAFE8` comparing against `0x40`. Under a low-power reading the most natural
+meaning is **"allowed wakeup sources / sleep-level mask"** (`15` = all four sources, `0` = none),
+but that is **not confirmed**: verifying it needs a current measurement in the corresponding state,
+or a debugger read of that byte.
+
+---
+
+## 14. Numbers and reproduction
 
 ```
 functions (tjl targets + tpush prologues + table targets)   382 inside the real code ranges
@@ -550,7 +694,7 @@ python tools/tc32_disasm.py --callsites 0xADDC # the §12 argument table (any fu
 
 ---
 
-## 14. Still unknown
+## 15. Still unknown
 
 - What the second entry `0x1A0` (pointed at from header `0x10`) does.
 - The entry into the `0xD31C` jump table: nothing branches or calls `0xB8A6`, so it must be entered
@@ -561,8 +705,10 @@ python tools/tc32_disasm.py --callsites 0xADDC # the §12 argument table (any fu
 - Purpose of the 4 KiB hole at `0x3000` (not code, and no references at all).
 - Which pins actually drive the UV load (`0x800540/0x800548` have 20+ accesses, not mapped pin by pin).
 - What the five boolean sub-flags `+2` / `+3` / `+6` / `+9` / `+0xB` mean (§11.4).
-- Whether `0x843C0C` is a link-layer context or application-side actuator state (§12.7 lists the
-  evidence both ways); what `16/64/80` at `+0x05` and `0`/`3` at `+0x0E` mean.
+- Whether `+0x04` of `0x843C0C` really is a wakeup-source / sleep-level mask (§13.7; needs a current
+  measurement or a debugger read); what `16/64/80` at `+0x05`, `0`/`3` at `+0x0E` and `0x43` at
+  `+0x21` mean.
+- The entry points and purpose of `0xA0B8` (1,540 B), `0xA818` (520 B) and `0xABB8` (372 B).
 - Who reads the two 20-byte constants that `0x5064` copies into the stack from `0xCD44` / `0xCD54`.
 - Who writes `[0x844B98]` (one read, no direct writer).
 - What `0x52C(0x6EF, 0x627)` does: it writes `0x800061 = 32` then `0`, then reads `0x843534`.

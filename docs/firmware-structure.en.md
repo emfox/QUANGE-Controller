@@ -176,6 +176,9 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
    `0x5060` is a 4-byte call-through-RAM-pointer stub; the real dispatcher entry is `0x5064`
    (the old `0x506E` note was corrected); `0xADDC` / `0xADB8` / `0xADC4` / `0xADD0` are four
    one-instruction accessors of the `0x843C0C` struct; `0x7484` is a bit RMW on analog registers.
+  The same round identified that struct as the **timer / low-power scheduling block**
+  (`+0x28` = next timer deadline, `+0x34` -> timer compare register, `+0x14`/`+0x18` = two
+  durations in milliseconds) — see §13.
 6. `0x800740` used by 40 functions: much of the logic is tick-based soft timing, consistent with the
    two time bases observed in the log records.
 
