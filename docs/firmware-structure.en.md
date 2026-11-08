@@ -112,6 +112,20 @@ a slot's duration in seconds into the minutes shown in the reply's third byte.
 | `0x46000` | 4-byte timestamp (measured `6AEFE8EE`, equal to the newest log record) | `0x592C`/`0x5940` |
 | `0x76000` | 8-byte calibration: the first 6 bytes reversed are the MAC | `0x5300`/`0x5674` |
 
+The RAM state block starts at `0x84355C` (initialised by `0x5F90`; used by `0x5382`, `0x5438`, `0x51A4`):
+
+| Offset | Content |
+| --- | --- |
+| `+0x00…+0x2F` | 4 slots x 12 B: `+4` = minute (4 B), `+8` = hour (4 B), remaining fields unknown |
+| `+0x30` | status word (`0x84358C`, `[1]` is the flag `A0` branches on) |
+| `+0x3C` / `+0x40` | two 32-bit runtime values (`0x64D0` derives the cycle duration from them) |
+| `+0x48` | current/last timestamp (`0x8435A4`, written by the state query) |
+| `+0x4C` / `+0x53` | single-byte flags (`0x5F90` sets `2`; the log trigger type is read from here) |
+| `+0x50…+0x5F` | **4 x 32-bit durations in seconds**, one per slot — the duration is not stored in the slot |
+
+So a slot only says *when*; durations live in a parallel array. The factory defaults are `08:00` and
+`20:00`, both `180 s` (3 minutes).
+
 The log is a **stack**: append writes `index+1`, an ack writes `index-1`, so records are consumed
 **newest first**, and `0xFF` means empty. **An ack only moves that one byte — nothing is erased**,
 which is why all 200 slots still hold their history after 45 acknowledgements. Each append rewrites

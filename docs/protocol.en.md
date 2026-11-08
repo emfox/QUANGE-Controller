@@ -331,7 +331,7 @@ verbatim, `[3..]` payload. So **the second reply byte is a length and the third 
 | `07` | `0x50F6` | Read the 4-slot table (3 B per slot, payload not parsed) | `BD 0D 07` + 12 bytes |
 | `08` | `0x51A4` | Write the table (payload parsed at `0x604C` first) | `BD 0D 08`, may not reply |
 | `09` | `0x5242` | **Read the serial block** (flash `0x43000`, 15 bytes) | `BD 10 09` + 16 bytes |
-| `A0` | `0x5382` | Housekeeping + load default table + branch (possibly factory reset, **unconfirmed**) | `BD 01 A0 00` |
+| `A0` | `0x5382` | **Factory reset**: erases the log/config/index sectors + resets the RAM state (table becomes 08:00 and 20:00, 3 min each) | `BD 01 A0 00` |
 | `A2` | `0x52F2` | MAC: read; **writes only while the stored MAC is still `FF×6`** | `BD 07 A2` + 6 bytes + `00` |
 | `A3` | `0x53DC` | Serial: **writes** it when the block is blank, then returns it | `BD 11 A3` + 17 bytes |
 | `A4` | `0x564E` | Version, a **literal constant `"000014"`** (reply type hardcoded to `A2`) | `BD 06 A2` + `"000014"` |
@@ -874,6 +874,21 @@ A follow-up check: `DB 01 05` returned `BD0805 FFFFFFFF FFFFFF 00` (**the log ta
 erased** — it held 190 historical records moments earlier), and the next-run field in the state
 frame moved to 20:00. ⟹ **`A0` is a factory reset: destructive and irreversible.** The original
 02:00/15:00 schedule was written back with `DB 08 08`.
+
+After the wipe one more **timer-triggered** cycle was run (a temporary `14:17/3min` entry, removed
+afterwards) to verify the write path:
+
+```
+14:17:00 triggered -> 14:17:46 state frame BD0E02 01 00B4 0030 64 6AF01DF0 6AF0140A (running, 48 s in)
+14:20:00 finished
+14:21:04 DB 01 05 -> BD0805  6AF013DA 00B4 00 00     started 14:16:58, 180 s, type 0, flag 00
+```
+
+So after the erase, append + index+1 + read all work, one record per cycle.
+
+Warning: this automatic run wrote a single record flagged `00`, while 44 of the 45 historical
+samples were `01`. The difference is most likely "auto-stop at the end" versus "manual stop", but a
+manual stop was **not tested on its own** — noted, not concluded.
 
 ## 9. Unverified
 
