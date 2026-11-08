@@ -257,7 +257,10 @@ def main():
     ap.add_argument("--range", help="print disassembly for START:END (hex)")
     ap.add_argument("--functions", action="store_true", help="function and call graph summary")
     ap.add_argument("--xrefs", action="store_true", help="literal pool data references")
-    ap.add_argument("--tables", action="store_true", help="function pointer tables")
+    ap.add_argument("--tables", action="store_true", help="switch jump tables")
+    ap.add_argument("--table", help="dump a u32 table: ADDR:COUNT")
+    ap.add_argument("--indirect", action="store_true",
+                    help="thumb function pointers stored by code (indirect entries)")
     ap.add_argument("--regions", action="store_true", help="per-region call/IO fingerprint")
     args = ap.parse_args()
 
@@ -317,14 +320,33 @@ def main():
                 print(f"  0x{a:06x}  {i['text']}")
 
     if args.tables:
-        print("== function pointer tables ==")
-        for name, lo, hi in (("event table", 0xD104, 0xD250), ("dispatch table", 0xD31C, 0xD394)):
+        print("== switch jump tables ==")
+        for name, lo, hi in (("att/event", 0xD104, 0xD250), ("stack", 0xD31C, 0xD394)):
             ptrs = [struct.unpack_from("<I", rom, o)[0] for o in range(lo, hi, 4)]
             u = sorted(set(ptrs))
-            print(f"  {name} @{lo:06x}: {len(ptrs)} slots, {len(u)} distinct, "
-                  f"default={hex(Counter(ptrs).most_common(1)[0][0])}"
-                  f" x{Counter(ptrs).most_common(1)[0][1]}")
-            print("   ", " ".join(hex(x) for x in u))
+            dflt, n = Counter(ptrs).most_common(1)[0]
+            print(f"  {name} @0x{lo:05x}: {len(ptrs)} slots, {len(u)} distinct, "
+                  f"default=0x{dflt:05x} x{n}")
+            for i, p in enumerate(ptrs):
+                if p != dflt:
+                    print(f"    slot {i:2d} (0x{i:02x}) -> 0x{p:05x}")
+            print("    distinct:", " ".join(hex(x) for x in u))
+
+    if args.table:
+        addr, count = (int(x, 0) for x in args.table.split(":"))
+        stride = 4
+        print(f"== table @0x{addr:05x} ({count} entries) ==")
+        for i in range(count):
+            v = struct.unpack_from("<I", rom, addr + i * stride)[0]
+            print(f"  [{i:2d}] 0x{v:05x}")
+
+    if args.indirect:
+        CODE = ((0x00, 0x2F8E), (0x4000, 0xCCD6))
+        print("== thumb function pointers stored by code (indirect entries) ==")
+        for a, _, _, i in ins:
+            v = i.get("value")
+            if v and v & 1 and any(lo < v < hi for lo, hi in CODE):
+                print(f"  0x{a:05x} -> 0x{v:05x}  (fn 0x{v & ~1:05x})")
 
 
 if __name__ == "__main__":

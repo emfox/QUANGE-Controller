@@ -40,7 +40,7 @@ That makes the listing readable: `tmov r1, #219` (= `0xDB`) and `[r6, #2]` come 
 | **`0x03000–0x03FFF`** | **4 KiB near-zero region** | 0 calls, 0 literals — not code |
 | `0x04000–0x0CCD6` | app layer + BLE callbacks + BLE stack | region breakdown in [the code map](firmware-code-map.en.md) §3 |
 | `0x0CCE0–0x0D0FF` | adv name / SCAN RSP / GATT attribute table | static analysis §3 |
-| `0xD104–0xD24C` | **event callback table**, 83 slots -> all inside `0x7800–0x7FFF` | §4 |
+| `0xD104–0xD24C` | **switch jump table**, 83 slots / 13 cases, all inside `0x7800–0x87FF` | §4 |
 | `0xD250–0xD2E4` | config constants + **56-byte unstructured block** | §6 |
 | `0xD31C–0xD390` | **pointer table**, 30 slots -> all inside `0x0B882–0x0BF52` | §4 |
 | `0xD3A4–0xD3E4` | strings, constants, 4-byte checksum tail | — |
@@ -118,8 +118,9 @@ The RAM state block starts at `0x84355C` (initialised by `0x5F90`; used by `0x53
 | --- | --- |
 | `+0x00…+0x2F` | 4 slots x 12 B: `+4` = minute (4 B), `+8` = hour (4 B), remaining fields unknown |
 | `+0x30` | status word (`0x84358C`, `[1]` is the flag `A0` branches on) |
-| `+0x3C` / `+0x40` | two 32-bit runtime values (`0x64D0` derives the cycle duration from them) |
-| `+0x48` | current/last timestamp (`0x8435A4`, written by the state query) |
+| `+0x3C` | **duration of the current cycle, in seconds** (the log timestamp written at the end is `+0x48 − +0x3C`, see the code map §8) |
+| `+0x40` | seconds elapsed in this cycle (1 Hz increment) |
+| `+0x48` | **current second counter** (`0x8435A4`, 1 Hz increment; the state query writes it too) |
 | `+0x4C` / `+0x53` | single-byte flags (`0x5F90` sets `2`; the log trigger type is read from here) |
 | `+0x50…+0x5F` | **4 x 32-bit durations in seconds**, one per slot — the duration is not stored in the slot |
 
@@ -132,13 +133,15 @@ which is why all 200 slots still hold their history after 45 acknowledgements. E
 the whole 1600 B block (read-modify-write of the entire sector), so flash wear is one sector erase
 per logged record.
 
-## 4. Two function pointer tables
+## 4. Two switch jump tables
 
-- **`0xD104` event table**: 83 slots, **70 point to the same default handler `0x7AF2`**, only 11 distinct
-  entries (`0x7AF2 0x7AFE 0x7B18 0x7B7C 0x7C00 0x7C5E 0x7CB6 0x7D96 0x7E00 0x7E74 0x7EA4`).
-  A sparse table with a shared default: typical BLE event/message dispatch.
-- **`0xD31C` jump table**: 30 slots, 23 distinct addresses increasing from `0xB882` to `0xBF52`,
-  mostly 30–160 B apart — looks like a switch-case address table rather than 30 independent functions.
+Both are `switch` jump tables, **not callback registries** (corrected 2026-11-08, see the code map §6).
+
+- **`0xD104`**: 83 slots, 13 real cases, **70 slots point at `0x7AF2`** — and `0x7AF2` is literally
+  `r6 = 0; return r6`, i.e. `default: return 0`. The 13 case values match the ATT opcode numbering
+  one by one, so this is the ATT request dispatcher (`0x7A98`), reached from `0x8D04`.
+- **`0xD31C`**: 30 slots, 23 distinct addresses increasing from `0xB882` to `0xBF52`, default
+  `0xBCA6`. Served by a dispatcher at `0xB8A6` (`index << 2`) which has **no static caller**.
 - **None of those 34 entries is among the 290 `tjl` targets**: the firmware relies heavily on indirect
   calls, so a static call graph alone misses this code.
 
@@ -163,7 +166,7 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
    51 distinct byte values, entropy 5.63 (the code page at `0xCC00` scores 5.93 —
    **entropy alone does not imply cryptographic material**). It sits between config constants and the
    pointer tables, possibly BLE security/random-related. **Purpose unverified — do not treat as a key or backdoor.**
-2. Two function pointer tables with 34 indirect entries (§4).
+2. Two switch jump tables (§4; previously recorded as "function pointer tables with 34 indirect entries").
 3. The 4 KiB `0x3000–0x3FFF` region has **no code references at all** (0 calls, 0 literals) —
    more likely a reserved/calibration sector than a "low-entropy data table".
 4. Exact addresses of command dispatch and reply builders (§3); **the whole command table and the
@@ -176,7 +179,7 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 
 - Semantics of the 64 x `0x06C0` vector slots; header field `0x0C`; vendor checksum algorithm.
 - Purpose of the `0xD2A8` constant block and the `0x3000` near-zero region.
-- What each of the 34 indirect entries does; whether `0x2EA0` is the main loop.
+- Where the `0xD31C` table (30 slots) is entered from and what each case means; whether `0x2EA0` is the main loop.
 - What `0x1DC` actually is: it writes both arguments into `0x800664`/`0x800668` and polls `0x80065C`,
   which looks like a hardware channel plus a wait — yet the result does equal `dividend / 60`
   (slot duration in seconds to minutes). Not yet classified.
@@ -189,5 +192,5 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 
 1. **Hardware cross-check**: send frames for each §3 constant to see which of `A0…EC` are live commands.
 2. **A second ROM dump** diffed against `0x40000` to pin down the sync cursor (open item in static analysis §4).
-3. Extend `tc32_disasm.py` with control-flow traversal from the 34 indirect entries.
+3. Extend `tc32_disasm.py` with control-flow traversal to map the state machine in `0x48EC` and the 30 `0xD31C` cases.
 4. Install Ghidra + the TC32 language module for decompilation (P-code) of the large functions and switches.
