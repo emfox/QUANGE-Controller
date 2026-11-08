@@ -123,7 +123,7 @@ called from nowhere except the event table — consistent with the app-side call
 | `0x719C` / `0x7200` / `0x7214` | `memcmp` / `memset` / `memcpy` | byte loops, `(dst,val,len)` |
 | `0x41B4` | `timer_add(id, interval)` | fills the 3-entry array at `0x842F34` (12 B each): `[+0]=id`, `[+4]=deadline`, `[+8]=interval` |
 | `0x4308` | `timer_cancel(id)` | linear search of `0x842F34` and removal |
-| `0x0506E` | protocol dispatch | see protocol §3.6 |
+| `0x05064` | protocol dispatch | see protocol §3.6 |
 | `0x0590C` | persist state | writes `0x42000` / `0x46000` |
 | `0x05994` | append a log record | read-modify-write of the whole `0x40000` sector, index at `0x45000` |
 | `0x05AFC` | get the current log record | reads `0x45000`, returns NULL on `0xFF` |
@@ -137,7 +137,7 @@ called from nowhere except the event table — consistent with the app-side call
 ATT receive (0x8D04, registered at 0x8439D0)
   +-> 0x7A98 dispatcher --> 0xD104 jump table (83 slots, 13 cases, default 0x7AF2 returns 0)
         +-> handlers in 0x07800-0x087FF / 0x08028-0x0855C
-              +-> 0x0506E command dispatch (by frame[2])
+              +-> 0x05064 command dispatch (by frame[2])
                             +-> 0x05900-0x065FF storage: log / schedule / state
                             +-> 0x04000-0x04FFF control: start, stop, duration
                                   +-> 0x041B4 / 0x04308 soft timers (array 0x842F34)
@@ -202,7 +202,7 @@ So this layer is an **ATT request dispatcher**, not an application callback laye
 **Marked as a strong inference, unproven** (the numeric fit is excellent, but there is no symbol table).
 
 `0xD31C` is the same shape: at `0xB8A6`, `r3 = r0<<2; r3 = 0xD31C[r3]; pc = r3`,
-30 entries / 23 distinct / `default = 0xBCA6`. **It has no static caller** — the entry is indirect (§12).
+30 entries / 23 distinct / `default = 0xBCA6`. **It has no static caller** — the entry is indirect (§14).
 
 Also withdrawn: the earlier "34 indirect entries" claim. Most of that list were case labels of these
 two switch tables, not registered function pointers. Only ~30 thumb pointers are actually written to
@@ -359,7 +359,172 @@ Besides the state byte at `+1`, the `0x84358C` sub-structure holds five 0/1 bool
 
 ---
 
-## 12. Numbers and reproduction
+## 12. What the four glue functions in the main loop really are
+
+The main loop (§11) keeps calling `0xADDC` / `0xADB8` / `0x7484` / `0x5060`. None of them is
+application logic: they are two foundations — an indirect-call stub, and the accessor set of one
+peripheral / stack state block.
+
+### 12.1 `0x5060` — a 4-byte indirect-call stub
+
+```
+0x5060  tjex r3      ; pc = r3
+0x5062  tnop
+```
+
+Both call sites load the pointer into `r3` first:
+
+```
+0x4B1A  r3 = u32[0x844BCC]   ; the first callback main registers (thumb pointer 0x0ED0 + 1)
+0x4B1E  r0 = 67  r1 = 16  r2 = 0
+0x4B24  tjl 0x5060
+```
+
+`0x4EB2` does the same and passes `(128, 64)`.
+
+=> `0x5060(a, b, c)` means **"call through the function pointer in RAM"**. That is why it shows up
+in the main loop while doing nothing itself — and it means the notification channel is swappable:
+replace `0x844BCC` and you replace the sink.
+
+### 12.2 `0x5064` — the command dispatcher (entry address corrected)
+
+Every earlier document said "the dispatcher at `0x506E`", but that is the **fifth instruction of the
+prologue**; the real entry is `0x5064` (the next `tpush` after the `0x5060` stub). Corrected globally.
+
+Besides the switch already documented, the prologue copies two 20-byte constants:
+
+```
+0x507E  copies 20 B from 0xCD54 to sp+0x30
+0x509C  copies 20 B from 0xCD44 to sp+0x10
+```
+
+`0xCD54` = `90 5F 01 00` x4 + `01 29 00 00` (90000, 90000, 90000, 90000, 0x2901),
+`0xCD44` = 16 x `FF` + `90 5F 01 00`. These are compiler-generated const templates for stack
+aggregates; **no later reader was found**, so no conclusion is drawn here.
+
+Case 7, fully decoded (previously only "reads the 4-slot table"):
+
+```
+r4 = reply buffer + 3
+for (i = 0; i < 4; i++) {
+    slot   = 0x84355C + i*12
+    if (u32[slot+8] == 0xFF) break             ; empty slot (leading byte all FF)
+    buf[0] = u32[slot+8]                       ; hour
+    buf[1] = u32[slot+4]                       ; minute
+    buf[2] = 0x1DC(u32[0x8435AC + i*4], 60)    ; duration in seconds / 60
+    r4 += 3
+}
+```
+
+`0x8435AC` = `0x84355C + 0x50`, exactly the parallel duration array. So the "slots store only the
+time of day, durations live in a parallel array" claim is confirmed again, and `0x1DC` really is a
+division (not a hardware channel).
+
+### 12.3 `0xADDC` / `0xADB8` / `0xADC4` / `0xADD0` — four one-instruction accessors
+
+```
+0xADB8(x)   byte[0x843C0C + 0x05] = x ; ret
+0xADC4(x)   half[0x843C0C + 0x0E] = x ; ret
+0xADD0()    return u32[0x843C0C + 0x2C]
+0xADDC(x)   byte[0x843C0C + 0x04] = x ; ret
+```
+
+All argument values across the 18 call sites:
+
+| Accessor | Field | Arguments |
+| --- | --- | --- |
+| `0xADDC` | `+0x04` | `15` x5 (`0x46C2` / `0x486A` / `0x4AFE` / `0x4BDA` / `0x4D94`), `3` x1 (`0x46D0`), `0` x5 (`0x46EA` / `0x4D0A` / `0x6408` / `0x663A` / `0x6652`) |
+| `0xADB8` | `+0x05` | `16` (`0x4636`, `0x4B02`), `80` (`0x46B2`, `0x4F2C`), `64` (`0x4EA0`) |
+| `0xADC4` | `+0x0E` | `0` (`0x46E0`), `3` (`0x46F0`) |
+
+The pattern in the main loop (`--callsites 0xADDC` reproduces it):
+
+- all five `15` sit on start / running paths; the one at `0x4AFC` is
+  `0xADDC(15)` -> `0xADB8(16)` -> `0x7484(64,0,1)` -> `[0x842F68+4] |= 8`, and `0x4BDA` / `0x4D94`
+  also clear state and switch a register before writing 15;
+- all five `0` sit on wrap-up paths: `0x46EA` (button), `0x4D0A`, and `0x6408` / `0x663A` / `0x6652`
+  in the storage/driver region;
+- the long-press path around `0x46A0`: `0xADB8(80)` -> `0x7484(64,0,1)` -> `0xADDC(15)`.
+
+The value `15` = `0b1111` itself suggests `+0x04` is a **bit mask / level**, not an enum id.
+
+### 12.4 `0x7484(a, b, c)` — bit read-modify-write on two 8-bit registers
+
+```
+m = a & 0xFF   (bit mask)
+r0 = reg_read(a + 0x21)
+b == 0 ? r0 |= m : r0 &= ~m
+reg_write(a + 0x21, r0)
+
+r0 = reg_read(a + 0x27)
+c != 0 ? r0 |= m : r0 &= ~m
+reg_write(a + 0x27, r0)
+```
+
+`reg_read` / `reg_write` are `0x840` / `0x880`: save `0x800643`, clear it (critical section), write
+the address to `0x8000B8`, the data to `0x8000B9`, then `0x40` (read) or `0x60` (write) to `0x8000BA`
+and poll the busy bit. So these are **analog/peripheral register accesses**, not a GPIO data port.
+
+All three call sites pass `(64, 0, 1)`: set bit 6 of `0x61` and `0x67`.
+The matching power-up sequence is `0x74EC(a)`:
+
+```
+reg 0x3C &= ~1 ; reg 0x2D = 0x15 ; reg 0x05 = 0x02 ; reg 0x2C = a | 0x1F
+```
+
+The other suspicious helper, `0x52C`, writes `0x800061 = 0x20` (bit 5 of the same register family),
+so the two belong to one "peripheral combination switch". The earlier guess that `0x52C` is a
+power/reset sequence was close.
+
+### 12.5 IRQ14 is an 80 ms timeout watchdog
+
+```
+0x4618 (IRQ 14)
+    if (byte[0x843960] != 8) return          ; only meaningful while connected
+    if (0x800740 - 0xADD0() > 0x138800)      ; 1,280,000 ticks = 80 ms
+        0xADB8(16)
+```
+
+`byte[0x843960] == 8` matches Telink's `BLS_LINK_STATE_CONN` (`BIT(3)`), so this is very likely the
+link-state byte and `0x843C0C` therefore sits inside the BLE stack globals (`0x843900` region).
+`+0x2C` is "the tick of the last activity".
+
+### 12.6 `0xADE8` / `0xAEC8`: arming a tick interrupt
+
+```
+r3 = u32[0x843C0C + 0x34]          ; base tick
+r0 = u32[0x843B20 + 0x2C]          ; offset
+r2 = r3 + (-56000) - r0 - [0x800740]
+if (r2 > 0x3FFFFFFF) ...
+u32[0x800744] = r3                 ; system timer compare register
+u32[0x843C0C + 0x20] = r3 + u32[0x843B20 + 0x40]
+```
+
+`-56000` ticks = **-3.5 ms**. `0x800744` is the system timer compare register, so writing it means
+"fire an interrupt when the timer reaches this tick". `0x843A80` (`byte+11` and `half+0x1C`
+decremented in a loop) and `0x843B20` are contexts of the same family.
+
+=> This layer is **link-timing scheduling**, not application logic.
+
+### 12.7 A contradiction that has to be stated
+
+The evidence around `0x843C0C` points **both ways**:
+
+- **For "link-layer context"**: `0xAD8C` (its initialiser) is called right after the RF init
+  sequence; IRQ14 is gated on "connected"; `0xADE8` writes the timer compare register; the values
+  `16/64/80` also appear on the RF side.
+- **For "application-side actuator state"**: the main loop's start/stop sequences write `+0x04`
+  (15/0) directly, immediately followed by a register switch like `0x7484(64,0,1)`; and the
+  application never reads `+0x04` back.
+
+Both readings are consistent, and static analysis has reached its limit. **Conclusion: `+0x04`
+correlates strongly with "load on/off", but whether it is a link-layer step number or an actuator
+enable bit can only be settled on hardware** — e.g. probe the register bit that `0x7484` touches, or
+change `+0x04` and watch the lamp.
+
+---
+
+## 13. Numbers and reproduction
 
 ```
 functions (tjl targets + tpush prologues + table targets)   382 inside the real code ranges
@@ -380,11 +545,12 @@ python tools/tc32_disasm.py --tables            # case lists of both switch tabl
 python tools/tc32_disasm.py --table 0xD31C:30   # any u32 table
 python tools/tc32_disasm.py --indirect          # thumb pointers stored by code
 python tools/tc32_disasm.py --blocks 48ec:4fe0  # the §11 main-loop block outline
+python tools/tc32_disasm.py --callsites 0xADDC # the §12 argument table (any function)
 ```
 
 ---
 
-## 13. Still unknown
+## 14. Still unknown
 
 - What the second entry `0x1A0` (pointed at from header `0x10`) does.
 - The entry into the `0xD31C` jump table: nothing branches or calls `0xB8A6`, so it must be entered
@@ -395,6 +561,9 @@ python tools/tc32_disasm.py --blocks 48ec:4fe0  # the §11 main-loop block outli
 - Purpose of the 4 KiB hole at `0x3000` (not code, and no references at all).
 - Which pins actually drive the UV load (`0x800540/0x800548` have 20+ accesses, not mapped pin by pin).
 - What the five boolean sub-flags `+2` / `+3` / `+6` / `+9` / `+0xB` mean (§11.4).
+- Whether `0x843C0C` is a link-layer context or application-side actuator state (§12.7 lists the
+  evidence both ways); what `16/64/80` at `+0x05` and `0`/`3` at `+0x0E` mean.
+- Who reads the two 20-byte constants that `0x5064` copies into the stack from `0xCD44` / `0xCD54`.
 - Who writes `[0x844B98]` (one read, no direct writer).
 - What `0x52C(0x6EF, 0x627)` does: it writes `0x800061 = 32` then `0`, then reads `0x843534`.
   It looks like a power/reset sequence and the arguments look like thresholds — unclassified.

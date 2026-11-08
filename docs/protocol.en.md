@@ -313,7 +313,7 @@ DB <frame[1]> <frame[2]=cmd> <payload...>
 ```
 
 `frame[1]` is a payload length for most commands but is not validated by all of them.
-The dispatcher sits at `0x506E` and disables interrupts on entry (clears IRQMODE at `0x800643`).
+The dispatcher sits at `0x5064` and disables interrupts on entry (clears IRQMODE at `0x800643`).
 Replies are built in a fixed buffer at `0x844ACC`: `[0]=0xBD`, `[1]=length`, `[2]=cmd` copied
 verbatim, `[3..]` payload. So **the second reply byte is a length and the third is the command**.
 

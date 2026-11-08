@@ -236,6 +236,22 @@ def region_report(ins):
         print("   ram  ", ", ".join(f"{hex(k)}x{v}" for k, v in rams.most_common(4)) or "-")
 
 
+def callsite_args(ins, fn, lookback=4):
+    """Print every call to fn together with the immediates loaded just before it."""
+    import re as _re
+    hits = [(k, x) for k, x in enumerate(ins)
+            if x[3].get("flow") == "call" and x[3].get("target") == fn]
+    print(f"== call sites of 0x{fn:04x} == {len(hits)}")
+    for k, (a, _s, _t, _i) in hits:
+        args = {}
+        for j in range(k - 1, max(-1, k - 1 - lookback), -1):
+            m = _re.match(r"tmov%C? (r\d+), #(\d+)$", (ins[j][3].get("text") or "").strip())
+            if m and m.group(1) not in args:      # keep the nearest write per register
+                args[m.group(1)] = m.group(2)
+        text = " ".join(f"{r}={v}" for r, v in sorted(args.items()))
+        print(f"  0x{a:04x}  {text or '(no immediates)'}")
+
+
 def block_outline(ins):
     """Split a function into basic blocks and print one line per block."""
     targets = {x[3]["target"] for x in ins if x[3].get("target")}
@@ -281,6 +297,7 @@ def main():
                     help="thumb function pointers stored by code (indirect entries)")
     ap.add_argument("--regions", action="store_true", help="per-region call/IO fingerprint")
     ap.add_argument("--blocks", help="basic-block outline for START:END (hex)")
+    ap.add_argument("--callsites", help="list call sites of ADDR with their immediates (hex)")
     args = ap.parse_args()
 
     rom = Path(args.rom).read_bytes()
@@ -296,6 +313,11 @@ def main():
                     extra += f" val=0x{info['value']:08x}"
             text = info.get("text") or f"<undef 0x{info['raw']:04x}>"
             print(f"{a:06x}: {info['raw']:04x}  {text:<52}{extra}")
+        return
+
+    if args.callsites:
+        all_ins = linear(rom, 0xA8, CODE_END)
+        callsite_args(all_ins, int(args.callsites, 16))
         return
 
     if args.blocks:

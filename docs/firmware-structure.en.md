@@ -61,7 +61,7 @@ That makes the listing readable: `tmov r1, #219` (= `0xDB`) and `[r6, #2]` come 
 
 | Feature | Address | Evidence |
 | --- | --- | --- |
-| **Frame check + command dispatch** | fn `0x506E`, core `0x50AC–0x5560` | `0x50AC tmov #0xDB` → branch to `0x50CA` → `0x50CC tmov #0xBD` → switch of `tmov #cmd; tcmp; tj` from `0x50D0` |
+| **Frame check + command dispatch** | fn `0x5064`, core `0x50AC–0x5560` | `0x50AC tmov #0xDB` → branch to `0x50CA` → `0x50CC tmov #0xBD` → switch of `tmov #cmd; tcmp; tj` from `0x50D0` |
 | **Reply builders** | `0x6A34` (4 x `tmov #0xBD` branches) | Also `0x0B28`, `0x6144`, `0x648A`, `0x9AAC` |
 | Advertising data | `0x47D2`→`0xCD00`, `0x4804`→`0xCCEC`, `0x4D10`→`0xCCE4` | literal refs |
 | GATT attribute table | `0x507E`, `0x509C`, `0x530E`, `0x58E6` | → `0xCD44`/`0xCD54`/`0xCDB4`/`0xCDC8` |
@@ -71,7 +71,7 @@ That makes the listing readable: `tmov r1, #219` (= `0xDB`) and `[r6, #2]` come 
 
 ### 3.1 Complete command table
 
-The dispatcher at `0x506E` tests `frame[0]` for the `0xDB` marker, takes **`frame[2]`** as the command
+The dispatcher at `0x5064` tests `frame[0]` for the `0xDB` marker, takes **`frame[2]`** as the command
 byte and spreads it through a binary comparison tree. Every reply is written into a fixed buffer at
 `0x844ACC`: `[0]=0xBD`, `[1]=length`, `[2]=command byte copied verbatim`. Each branch was verified on
 hardware (see [protocol §3.6](protocol.en.md)).
@@ -172,7 +172,11 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 4. Exact addresses of command dispatch and reply builders (§3); **the whole command table and the
    flash data layout** (§3.1, §3.2) — including `03` (battery), `09` (serial block) and `A6`
    (erase the marker sector), none of which appear anywhere in the protocol doc.
-5. `0x800740` used by 40 functions: much of the logic is tick-based soft timing, consistent with the
+5. The four "glue" functions of the main loop (see [the code map](firmware-code-map.en.md) §12):
+   `0x5060` is a 4-byte call-through-RAM-pointer stub; the real dispatcher entry is `0x5064`
+   (the old `0x506E` note was corrected); `0xADDC` / `0xADB8` / `0xADC4` / `0xADD0` are four
+   one-instruction accessors of the `0x843C0C` struct; `0x7484` is a bit RMW on analog registers.
+6. `0x800740` used by 40 functions: much of the logic is tick-based soft timing, consistent with the
    two time bases observed in the log records.
 
 ## 7. Still unknown
