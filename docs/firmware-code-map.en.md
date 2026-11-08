@@ -778,6 +778,47 @@ It has 11 callers passing **2, 3, 4, 6, 7, 8, 9, 10, 11, 13**. Every case reads
 `0x843D70` is written 16 times and read once — a "last RF state snapshot".
 `0x800740` is read once per case, which confirms it is a tick counter, not an IRQ flag.
 
+### 15.2b Table B (`0xD358`) is the **LL control PDU dispatcher**
+
+Table B belongs to `0xBC90` (1,116 B), whose only call site is `0x8DDE`, inside the packet handler
+`0x8D04`. Its selector is **offset 10 of the packet**, the same as the `0xD104` table in §6:
+
+```
+0xBC90  r3 = u8[pkt + 10]
+        if (r3 > 14) return 0
+0xBCB4  r3 <<= 2 ; pc = u32[0xD358 + r3]
+```
+
+Renumbering the 15 slots by `opcode 0x00..0x0E` (the previous version counted from `0xD31C`, which
+was off by 15 slots):
+
+| opcode | target | LL control PDU | corroboration |
+| --- | --- | --- | --- |
+| `0x00` | `0xBCA6` (empty) | CONNECTION_UPDATE_IND | — |
+| `0x01` | `0xBCD6` | **CHANNEL_MAP_IND** | `memcpy(0x843D1C+32, pkt+10, 7)` — exactly 5 B map + 2 B instant |
+| `0x02` | `0xBCA6` | TERMINATE_IND | — |
+| `0x03` | `0xBDF4` | **ENC_REQ** | |
+| `0x04` | `0xBE2C` | **ENC_RSP** | 5× memcpy + `0x719C` |
+| `0x05` | `0xBED2` | START_ENC_REQ | tail-calls `0xB67C` |
+| `0x06` | `0xBCA6` | START_ENC_RSP | — |
+| `0x07` | `0xBEDC` | UNKNOWN_RSP | `0x843E34` / `0x843E38` |
+| `0x08` | `0xBF08` | **FEATURE_REQ** | `0x843E24` |
+| `0x09` | `0xBF2A` | **FEATURE_RSP** | |
+| `0x0A` | `0xBF52` | PAUSE_ENC_REQ | `0xB5A4` ×2 + `0xC0EC` |
+| `0x0B` | `0xBCA6` | PAUSE_ENC_RSP | — |
+| `0x0C` | `0xBCBC` | **VERSION_IND** | clears `+12..+18` of `0x843D08`, calls `0xB67C(7)` |
+| `0x0D` | `0xBCBC` | REJECT_IND | same |
+| `0x0E` | `0xBCBC` | SLAVE_FEATURE_REQ | same |
+
+"CHANNEL_MAP_IND copies 7 bytes", "ENC_REQ and ENC_RSP each have their own body" and "VERSION_IND
+takes the common cleanup path" cannot all hold by accident. So:
+
+- `0xD104` (83 slots) = **ATT opcode** dispatch (0x00–0x52)
+- `0xD358` (15 slots) = **LL control PDU opcode** dispatch (0x00–0x0E)
+- `0xD31C` (15 slots) = `0xB874`'s **internal event code** dispatch (2–13)
+
+All three are compiler-generated `switch` tables; only the index space differs.
+
 ### 15.3 `0xABB8` does have a caller, and `0x84391C` is a function pointer
 
 `0xAD3E` calls `0xABB8`. It is **link parameter init**:
@@ -908,18 +949,56 @@ P0 bit 6 = button input (`tand 0x40` in `0x43A0`), unchanged from the previous v
   `+0x14`/`+0x18` = `0x186A00` (1,600,000). So it is a **struct base**, not a pointer variable
   (`0x1C6E` only tests it for non-zero).
 
+### 15.8 `0x6538` is the 1 Hz session timer, `0x64D0` is the teardown
+
+The `0x6538` that the main loop and `0x5F90` keep cancelling is only 24 instructions:
+
+```
+0x6538  u32[state+0x3C] += 1                  ; elapsed seconds
+        if (u8[state+0x35] != 0) {
+            if (u32[+0x3C] > 179) 0x64D0()    ; fixed 3-minute profile
+        } else {
+            r3 = u32[state + u8[state+0x60]*4 + 0x50]   ; profile table
+            if (u32[+0x3C] > r3) 0x64D0()
+        }
+        return -1
+```
+
+`0x64D0` is the end of a session:
+
+```
+u16[state+0x31] = 0 ; u16[state+0x32] = 0
+if (u8[0x842F74] == 1) 0x6484( u32[+0x48] - u32[+0x3C] )
+else                   0x5F4C( u32[+0x48] - u32[+0x3C] )
+0x800780 &= ~4
+u8[state+0x39] = 0
+0x80059B &= 0x7F          ; P3 bit 7 off
+0x800593 &= ~0x10         ; P2 bit 4 off
+0x6144()
+u32[state+0x3C] = 0
+```
+
+⟹ **`+0x3C` = seconds elapsed in this session** (`0x6538` adds 1 every second) and
+**`+0x48` = seconds since boot** (`0x6308` adds 1 every second and immediately splits it into
+d/h/m/s via `0x5CB0` for the log). So the `+0x48 − +0x3C` that `0x64D0` hands to `0x5F4C` / `0x6484`
+is **the wall-clock moment this session started**.
+This also settles the unit question behind §8: that pair is in **seconds, not ticks**.
+The session duration is not in either field — it is the profile threshold in `0x6538`: `+0x60` is a
+profile index, `0x50` onwards is the per-profile second table, and `+0x35 != 0` selects a fixed
+180-second profile. Teardown always clears P3 bit 7 and
+P2 bit 4 — which is where those two actuator bits from §15.6 end up.
+
 ---
 
 ## 16. Still unknown
 
-The second pass closed eight items from the previous list (`0xA0B4`/`0xA818`/`0xABB8`, the `0xD31C`
-entry, `0x1DC`, the five sub-flags, the GPIO attribution, the `0x3000` hole). What is left needs the
-device or a debugger:
+The second pass closed ten items from the previous list (`0xA0B4` / `0xA810` / `0xABB8`, the
+attribution of all three tables, the `0x1DC` hardware divider, the five sub-flags, the GPIO map,
+the `0x3000` hole and the `0x6538` timer). What is left needs the device or a debugger:
 
 - `0x1A0`, the second entry from header `0x10`: the body is IRQ context save/restore + `treti` (§9),
   but which IRQ uses it is still open.
 - What the four callbacks `0x0ED0` / `0x1378` / `0x7520` / `0x13E8` handle.
-- What `0x6538` is — the timer callback that `0x5F90` and the main loop keep cancelling.
 - Whether `+0x04` of `0x843C0C` really is a wakeup-source / sleep-level mask (§13.7), and what
   `16/64/80` at `+0x05`, `0`/`3` at `+0x0E`, `0x43` at `+0x21` mean. Needs a current measurement
   or a debugger read.
