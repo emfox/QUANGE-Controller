@@ -15,7 +15,7 @@
 | Advertising name | `QUANGE-WY020702` (steady) **or** `kHID` (module factory default, **only the first packet of each scan**, see note below) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | Advertising payload | Service UUIDs `0x1812` (**declared only — the device provides no HID service**) + `0x180F` (battery, real); manufacturer data payload = **last 4 bytes of the MAC**, company ID `0x451C` |
-| SoC | Telink. **Exact part number unknown** — see note below |
+| SoC | Telink. **Measured binary-compatible with TLSR8258**; exact silkscreen part still unknown (§8.6) |
 | Pairing | **Not required** — no pairing, no bonding, no encryption |
 | Frame encryption | **None** — plaintext hexadecimal |
 | Checksum | **None** — no CRC (OTA excepted) |
@@ -44,7 +44,8 @@
 >
 > So the PID field reflects **the SDK default compiled into the firmware**, not the physical
 > package. **The chip cannot be identified at the BLE layer at all — only by reading the
-> silkscreen after disassembly.**
+> silkscreen after disassembly.** A successful third-party OTA on 2026-11-08 (§8.6) narrowed
+> this to **binary compatibility with TLSR8258** — a functional inference, not a silkscreen.
 
 > **Entity check (2026-11-08)**: "QUANGE" is the in-house brand of **Shanghai Laifeng
 > Household Products Co., Ltd.**, which is also the responsible entity printed on this unit's
@@ -711,7 +712,7 @@ was restored and read back after all write cases** (last row).
 | Real-clock run (command-triggered) | `DB 02 04 01` for 209 s, then read the log | still `BD0805 FFFFFFFF` | **a command-triggered run writes no log**; it says nothing about the queue |
 | Scheduled point recheck | 07:09, bare `DB 01 05` after the 02:00 run | `BD0805 6AEF6720 00B4 00 00`, then `BD0806 FFFFFFFF` after ACK | **a scheduled run writes a record and the log is readable again** |
 | Advertising name | 60 s scan → connect → 60 s scan | `kHID` was only the first packet of each round (1/121, 1/98), all others `QUANGE-WY020702` | **not an alternation; startup default then fixed** |
-| Post-reboot read-only check | 10:44 long-press reboot, GATT inventory + every readable value | `180A` has only `2A50` (`028A2466820100`); OTA char reads `00`; battery 99%; `2A00` = `Hi-YM01-12DC2009BB6` | **no chip clue at the BLE layer**, matches 10-29; dumper verdict unchanged |
+| Post-reboot read-only check | 10:44 long-press reboot, GATT inventory + every readable value | `180A` has only `2A50` (`028A2466820100`); OTA char reads `00`; battery 99%; `2A00` = `Hi-YM01-12DC2009BB6` | **no chip clue at the BLE layer**, matches 10-29 (later overturned by §8.6) |
 | State after reboot | `DB 04 02` + real time | `BD0E02 … 6AF01DF0 6AEFE207`: idle, `next run` 15:00, device clock 10:44:23 | **a long-press reboot on USB power does not lose the clock** |
 | Power-on run log | bare `DB 01 05` after reboot (**no ACK**) | `BD0805 00000000 00B4 01 00` | **second observation** of `type=1` / `ts=0`; `rec_type=00` (start), record left unread in the queue |
 
@@ -729,23 +730,53 @@ was restored and read back after all write cases** (last row).
 > unaffected throughout; the real unix clock was in place and the schedule remained
 > `02:00/3min + 15:00/5min`.
 
+### 8.6 2026-11-08 11:00–11:35: ROM dump succeeded (USB power, −68 to −74 dBm)
+
+The user chose to accept the bricking risk and run one OTA dump. **It succeeded end to end,
+and the device was restored to the vendor firmware and verified.**
+
+| Step | Action | Result | Conclusion |
+| --- | --- | --- | --- |
+| Frame check | read the unpacked `app-service.js` | vendor OTA = `01FF` + 20 B frames (seq2 + 16 B + CRC16 LE) + 18 B end frame | **incompatible with TelinkMiFlasher** (32 B blocks / `00FF` prefix / 6 B end frame); the web tool alone would fail |
+| Handshake probe | send only `01FF`, no data, disconnect and read back | OTA char `00` before and after; advertising, schedule and log queue all intact | `01FF` is harmless; the device does not enter a bootloader |
+| Flashing | 2480 x 20 B in 44.2 s; end frame `02FF AF09 50F6 0000` twice + CRC | rebooted as `BLE_05F834` (`C0:D4:B2:05:F8:34`), −74 dBm | **binary-compatible with TLSR8258**; bootloader accepted third-party firmware |
+| Read channel | `0x1f10` / `0x1f1f`, `D4 000000 100000` | `D4 000000 56800000 00005D02 …` | flash is readable |
+| Full dump | `D4 000000 000008` | 524288 B (32768 notifications); first 10 packets lost, patched by single-address reads | complete ROM, `sha256 ae711549…` |
+| Layout | string search + image comparison | `0x00000–0x0DFFF` vendor firmware (`QUANGE` @`0xCCEE`, `Hi-YM` @`0x2F8C`/`0xD3BA`); `0x20000` = exact BLE-Hacker.bin; `0x40000+` / `0x76000+` config and calibration | **dual-slot layout confirmed**, vendor firmware never touched |
+| Restore | `D7` Change Start Boot | back to `QUANGE-WY020702` at the original MAC | switch worked |
+| Verify | full init sequence | `BD0D07 020003 0F0005 FF×6 ED`; `BD1102 …` battery 100% / `next run` 15:00; log head normal | fully functional, schedule unchanged |
+
+> **Two earlier judgements corrected**: (1) "TelinkMiFlasher shares the frame format and
+> would very likely write" was wrong — block size, handshake and end frame all differ;
+> success required a byte-for-byte reproduction of `app-service.js`. (2) "flashing may
+> brick it permanently and the vendor ROM cannot come back" is disproven — with dual
+> slots the vendor firmware stays at `0x00000` and `D7` switches back.
+> ⚠️ **That does not make the earlier caution wrong**: neither was knowable beforehand.
+> Also, the BLE-Hacker firmware's `2A26` string `TLSR825x` is its own hard-coded value,
+> **not** evidence of the part number. "8258-compatible" is only a **functional inference**
+> (a binary built for 8258 with `-llt_8258` booted fully and operated the flash); the exact
+> silkscreen part is still unknown.
+
+> Artifacts are kept locally, **not committed to the public repo**: `rom_512k.bin`
+> (512 KB, `sha256 ae711549b42f2c1598df7edaf4bf61a8f8aaad96163cfb263afd4ffc2475d096`) and
+> `rom_vendor_firmware.bin` (`0x00000–0x0E000`, 57,344 B,
+> `sha256 79fa1730ec9f817319ae4414b0c0b91a3f8ea3ca46d0b40e8b304c1b7b468669`).
+> The vendor firmware is third-party copyrighted and is not distributed with this repo.
+> The reproduction script `ota_dump.py` is kept alongside them.
+
 ---
 
 ## 9. Unverified
 
-> Items confirmed on real hardware are in §8.2 – §8.5. Only **genuinely open** questions that
+> Items confirmed on real hardware are in §8.2 – §8.6. Only **genuinely open** questions that
 > are worth further effort remain below.
 
-- **Exact Telink part number** — exhausted at the BLE layer: `180A` exposes only `2A50`,
-  and PID `0x8266` is a hard-coded Telink SDK default; there is no `2A27` Hardware
-  Revision either. The user only replaced the batteries with a USB power lead —
-  **the case cannot be opened**, so the silkscreen route is unavailable too.
-  ⚠️ This blocks `TLSR825x_OTA_Flash_Hacker` ([live-test](live-test-2026-10-29.md) §7):
-  `BLE-Hacker.bin` is built only for TLSR8258, the local part is unknown, and there is
-  no vendor firmware to roll back to. Source check on 2026-11-08: TelinkMiFlasher's
-  UUIDs / `01ff` handshake / `02ff`+count+`~count` end frame are **the same protocol
-  family** as this vendor app (only 32 B vs 16 B chunks), so the tool would very
-  likely write successfully — the risk is real, not "it probably won't flash anyway".
+- **Exact Telink silkscreen part number** — the case is still unopened, so the precise
+  part cannot be read. But the 2026-11-08 measurement narrows it: `BLE-Hacker.bin`, built
+  for TLSR8258 with `-llt_8258`, **booted fully and operated the flash** on this unit
+  (§8.6), so it is binary-compatible with 8258. PnP ID `0x8266` remains an SDK default and
+  the BLE layer has nothing further; the exact silkscreen needs disassembly. **Not pursued.**
+  The earlier worry that the dumper would be blocked by an unknown part is resolved.
 - **Do later scheduled points keep the log readable?** — confirmed once (11-08 02:00,
   see §8.5); USB power needs no long-press restart. What is still missing is a **second
   and a multi-day** repetition. The next natural scheduled point is 11-08 15:00 — just

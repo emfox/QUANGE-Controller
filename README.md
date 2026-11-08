@@ -186,8 +186,10 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
   名字只存服务器和手机本地，**从来没写进设备**。服务器下线后无法修改；
 - **固件升级已不可用**：小程序里的 OTA 实现完整（Telink 标准 OTA + CRC16 分包），
   但检查更新和下载固件都要走 `api.sh-lifefun.cn`，该域名 DNS 还在、80/443 全部超时。
-  协议机制已整理在 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.1，
-  但没有固件文件就无法刷机（写坏即变砖，无回滚）；
+  协议机制已整理在 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.1；
+  2026-11-08 已按该机制成功刷入第三方固件、导出整片 ROM 并切回原厂固件，
+  原厂固件备份也已取得（见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §8.6）。
+  但刷写仍是不可逆操作，**本项目不提供固件文件、也不建议自行尝试**；
 - `DB 01 A0`（设备复位）**本项目不实现** —— 它在原厂是解绑时发的，可能清掉定时表，
   没有任何非破坏性用途；
 - **状态回包依赖订阅顺序**：状态、电量、下次杀菌时间都来自 `DB 04 02` 的回包。2026-11-07 实测：

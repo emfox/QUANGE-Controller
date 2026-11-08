@@ -508,11 +508,17 @@ So:
 | --- | --- |
 | Check for a new version | ❌ needs the backend |
 | Download firmware | ❌ needs the backend |
-| Flash manually | ⚠️ protocol known, but **no firmware file**, and the OTA characteristic is unconfirmed |
+| Flash manually | ✅ carried out on 2026-11-08 (see [protocol.en.md](protocol.en.md) §8.6): OTA characteristic confirmed, third-party firmware flashed, full ROM dumped, vendor image restored |
 
 **In theory**, given a `.bin` you could hand-flash it using 5.1.4. But the risk is high (a bad
 write bricks the unit, with no factory image to roll back), so **do not attempt this without an
 original firmware file**.
+
+> **Updated 2026-11-08**: this was carried out successfully — third-party firmware flashed
+> with the 16 B framing, the full flash dumped, `D7` switched back to the vendor image, and
+> a factory backup obtained. See [protocol.en.md](protocol.en.md) §8.6. Note that
+> TelinkMiFlasher's 32 B framing is **incompatible** with this device; the vendor's own
+> `app-service.js` framing is required. Flashing remains irreversible.
 
 > Aside: to capture the raw `BD 06 A2` reply, just run
 > `python3 tools/set_timer.py --version` (sends `DB 01 A4` and parses the version).
@@ -687,7 +693,7 @@ connect in either state.
 | App unusable | ✅ Solved — both the web page and the Python script set schedules |
 | Backend gone | ✅ Core control unaffected; only history, rename and OTA are lost |
 | Battery | ⚠️ Below threshold it pushes `BD 05 A1` and refuses to start — replace the cells |
-| Bricked firmware | ⚠️ No factory image to roll back; don't experiment with OTA |
+| Bricked firmware | A factory image backup now exists (2026-11-08, §8.6 of the protocol doc); OTA is still irreversible, so do not experiment casually |
 | UV tube ageing | ⚠️ Mercury or LED tubes have finite life; not readable in software |
 | Bluetooth module failure | ❌ No workaround; it becomes an ordinary toothbrush holder |
 

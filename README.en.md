@@ -211,8 +211,10 @@ In short: **the bundle must be decrypted; the protocol does not.**
 - **Firmware update is no longer possible**: the mini program ships a complete OTA implementation
   (Telink-style OTA with CRC16 chunking), but both the update check and the download go through
   `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is
-  documented in [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.1, but with no firmware file
-  there is nothing to flash (a bad write bricks the unit, with no rollback);
+  documented in [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.1. On 2026-11-08 those
+  frames were used to flash third-party firmware, dump the full ROM and switch back; a vendor
+  firmware backup now exists ([docs/protocol.en.md](docs/protocol.en.md) §8.6). Flashing is
+  still irreversible — **no firmware is shipped here and DIY attempts are not recommended**;
 - **The state reply depends on subscription order**: state, battery and next-run time all come
   from the reply to `DB 04 02`. Measured 2026-11-07: you must **subscribe to `1002` before
   sending**, otherwise the reply is dropped and not buffered — that was the cause of the older
