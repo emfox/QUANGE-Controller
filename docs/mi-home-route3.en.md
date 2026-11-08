@@ -129,3 +129,45 @@ Item 3 is the real effort: AES-128, CCM mode, P-256 point multiplication, SHA-25
 - Is the six-byte block at `r4` really the BLE address? (reversed write plus a length of six is strong evidence, but it has not been confirmed by reading RAM on the device.)
 - Is the hardcoded broadcast length `27` at `0x47FE` the only place it is set, or is it reset elsewhere?
 - If L1 ever needs verifying on hardware, one scan-response capture in nRF Connect settles it — no code change required.
+
+## 9. Appendix: product IDs found (surveyed 2026-11-08)
+
+### 9.1 Sterilizer / germicidal categories — all Wi-Fi
+
+| Category | Model | Product ID | Protocol | Vendor |
+| --- | --- | --- | --- | --- |
+| `sterilizer` | `uvfive.steriliser.maine` (FIVE knife/chopstick steriliser) | **6638** | Wi-Fi | FIVE |
+| `sterilizer` | `xiaomi.steriliser.uvs01` (Mijia smart steriliser) | **25643** | Wi-Fi | Xiaomi |
+| `germicidal-lamp` | `uvfive.s_lamp.slmap2` (FIVE UVC lamp) | **68812** | MiIO (Wi-Fi) | FIVE |
+| `germicidal-lamp` | `ziwooo.s_lamp.uvc` (Ziwooo Pro) | **70276** | MiIO (Wi-Fi) | Ziwooo |
+| `foot-bath` | `xiaomi.foot_bath.mizs1` (Mijia **sterilising** foot bath) | **13223** | **BLE Mesh** | Xiaomi |
+
+Conclusion: **there is no BLE model in this category at all.** And the PID does not just tag the category, it picks the **provisioning channel** — given a Wi-Fi PID, Mi Home runs the Wi-Fi flow, so a BLE device does not even behave correctly at the discovery stage. "Borrow a sterilizer PID" is the empty set.
+
+The only BLE one is the foot bath `13223`, which is a foot bath and is mesh (certificate chain).
+
+### 9.2 Switch / relay category — BLE Mesh is everywhere
+
+| Model | Product ID | Protocol | Vendor | Released |
+| --- | --- | --- | --- | --- |
+| `wainft.switch.sw0a02` (XG BLE-Mesh relay) | **4380** | BLE Mesh | Xingguang | 2021-03 |
+| `zxlink.switch.zxltdq` (Zhixianglian Mesh 2.0 relay) | **35553** | BLE Mesh | Zhixianglian | 2026-04 |
+| `bean.switch.bl04` (four-gang no-neutral switch V2 Mesh) | **14918** | BLE Mesh | Yishu | 2023-08 |
+
+The spec of `wainft.switch.sw0a02` is almost exactly this device:
+
+| Spec property | Range | Ours |
+| --- | --- | --- |
+| `switch.on` | bool | command `04` |
+| `function.jog` | 0 off / 1 on | inching mode |
+| `function.delaytime` | **1–3600 s** | the 180 s fixed profile fits |
+| `function.default` | ON / OFF / Memory | power-on default state |
+| `function.inteligent-switch` | 0 / 1 | toggle on power loss |
+| `function.device-reset` | write 1 | factory reset |
+| `remote.*` | 8 remote slots | no equivalent |
+
+⟹ If a PID must be borrowed, `4380` is semantically the closest: right category, right provisioning channel, and an inching range that covers our 180 s.
+
+One more thing worth recording from the `zxlink.switch.zxltdq` FAQ: "in the Mi Home app, switch the device from gateway mode to **BLE direct mode**" — so this category already has a phone-direct-connection mode without a gateway.
+
+**But be clear**: borrowing a PID only makes the category and provisioning channel line up; it does not supply an identity. Binding still needs the cloud's (PID, MAC) record, and Mesh still needs the certificate chain. This section is reference data, not a pass.

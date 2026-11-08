@@ -129,3 +129,45 @@
 - `r4` 指向的 6 字节是否就是 BLE 地址（逆序写入 + 长度 6，指向性很强，但没在真机上读内存核对）；
 - 广播长度常量 `27` 是否只在这一处（`0x47FE`）设定，还有没有别的地方重设；
 - 若将来要在真机上验证 L1，用 nRF Connect 抓一次 scan response 即可判定，不需要改代码。
+
+## 9. 附：查到的产品 ID（2026-11-08 查）
+
+### 9.1 消毒 / 杀菌品类 —— 全部是 Wi-Fi
+
+| 品类 | 型号 | 产品 ID | 协议 | 厂商 |
+| --- | --- | --- | --- | --- |
+| `sterilizer` | `uvfive.steriliser.maine`（FIVE 刀筷杀菌架） | **6638** | Wi-Fi | FIVE |
+| `sterilizer` | `xiaomi.steriliser.uvs01`（米家智能消毒机） | **25643** | Wi-Fi | 小米 |
+| `germicidal-lamp` | `uvfive.s_lamp.slmap2`（FIVE 消毒杀菌灯） | **68812** | MiIO（Wi-Fi） | FIVE |
+| `germicidal-lamp` | `ziwooo.s_lamp.uvc`（紫物 Pro） | **70276** | MiIO（Wi-Fi） | 紫物 |
+| `foot-bath` | `xiaomi.foot_bath.mizs1`（米家**杀菌**足浴器） | **13223** | **BLE Mesh** | 小米 |
+
+结论：**这个品类没有 BLE 型号**。而 PID 不只标品类，它决定**配网通道**——米家读到 Wi-Fi 设备的 PID 就去走 Wi-Fi 配网，BLE 设备连"发现"阶段的表现都不对。所以"借消毒器的 PID"在数据层面是空集。
+
+唯一带 BLE 的是浴足器 `13223`，但品类是足浴盆，且走 mesh（证书链）。
+
+### 9.2 开关 / 通断器品类 —— BLE Mesh 大量存在
+
+| 型号 | 产品 ID | 协议 | 厂商 | 发布时间 |
+| --- | --- | --- | --- | --- |
+| `wainft.switch.sw0a02`（XG 蓝牙 Mesh 通断器） | **4380** | BLE Mesh | 馨光 | 2021-03 |
+| `zxlink.switch.zxltdq`（智相连 Mesh2.0 通断器） | **35553** | BLE Mesh | 智相连 | 2026-04 |
+| `bean.switch.bl04`（四键单火开关 V2-Mesh 版） | **14918** | BLE Mesh | 翼数 | 2023-08 |
+
+其中 `wainft.switch.sw0a02` 的 spec 几乎就是这台设备：
+
+| spec 属性 | 范围 | 对应我们的 |
+| --- | --- | --- |
+| `switch.on` | bool | 命令 `04` 立即开关 |
+| `function.jog` | 0 关 / 1 开 | 点动模式 |
+| `function.delaytime` | **1–3600 秒** | 180 秒固定档正好落在范围内 |
+| `function.default` | ON / OFF / Memory | 上电默认状态 |
+| `function.inteligent-switch` | 0 / 1 | 灵动（掉电翻转） |
+| `function.device-reset` | 写 1 | 恢复出厂 |
+| `remote.*` | 8 个遥控器槽 | 无对应 |
+
+⟹ 如果一定要"借一个 PID"，`4380` 是语义上最贴的候选：品类对、配网通道对、点动延时范围也覆盖我们的 180 秒。
+
+另外 `zxlink.switch.zxltdq` 的官方 FAQ 里有一句值得记下：「在米家 App 中，将设备从网关模式切换至**蓝牙直连模式**」——说明通断器这一类在米家里本来就存在"不经网关、手机直连"的用法。
+
+**但要说清楚**：借到 PID 只解决"品类与配网通道对得上"，不解决身份。绑定仍然需要云端那条 (PID, MAC) 的登记，Mesh 仍然需要证书链。这一节是参考数据，不是通行证。
