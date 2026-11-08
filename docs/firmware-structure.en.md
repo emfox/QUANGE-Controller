@@ -36,13 +36,14 @@ That makes the listing readable: `tmov r1, #219` (= `0xDB`) and `[r6, #2]` come 
 | `0x00000–0x0001F` | firmware header; `0x00` is `tj.n 0xB0` | length field `0x18` = `0xD3E4` |
 | `0x00020–0x000AF` | **IRQ stub + 64 nops** | `0x20` writes `0x80006F=0x81` and returns; `0x28–0xA7` are all `tmov r8,r8` (`0x06C0`) — alignment padding, **not a vector table** |
 | `0x000B0–0x02F8C` | boot, init, base library, **main** | `0x136` calls `0x760`, then spins forever |
-| `0x02F8E–0x02FFF` | an ASCII string plus zero padding | code ends here |
-| **`0x03000–0x03FFF`** | **4 KiB near-zero region** | 0 calls, 0 literals — not code |
+| `0x02F8C–0x02FFF` | ASCII **`Hi-YM01-12DC2110000`** plus zero padding | product model string; code ends here |
+| **`0x03000–0x03FFF`** | **4 KiB near-zero region** | 0 calls, 0 literals; only a small blob at `0x327C` (`0x40 / 8 / 0x84307C`) that looks like a `.data` copy descriptor |
 | `0x04000–0x0CCD6` | app layer + BLE callbacks + BLE stack | region breakdown in [the code map](firmware-code-map.en.md) §3 |
 | `0x0CCE0–0x0D0FF` | adv name / SCAN RSP / GATT attribute table | static analysis §3 |
 | `0xD104–0xD24C` | **switch jump table**, 83 slots / 13 cases, all inside `0x7800–0x87FF` | §4 |
 | `0xD250–0xD2E4` | config constants + **56-byte unstructured block** | §6 |
-| `0xD31C–0xD390` | **pointer table**, 30 slots -> all inside `0x0B882–0x0BF52` | §4 |
+| `0xD31C–0xD357` | **switch table A**, 15 slots -> all inside `0x0B882–0x0BB22` | §4 |
+| `0xD358–0xD393` | **switch table B**, 15 slots -> `0x0BCA6–0x0BF52` | §4 |
 | `0xD3A4–0xD3E4` | strings, constants, 4-byte checksum tail | — |
 
 ## 2. Functions and call graph
@@ -140,8 +141,11 @@ Both are `switch` jump tables, **not callback registries** (corrected 2026-11-08
 - **`0xD104`**: 83 slots, 13 real cases, **70 slots point at `0x7AF2`** — and `0x7AF2` is literally
   `r6 = 0; return r6`, i.e. `default: return 0`. The 13 case values match the ATT opcode numbering
   one by one, so this is the ATT request dispatcher (`0x7A98`), reached from `0x8D04`.
-- **`0xD31C`**: 30 slots, 23 distinct addresses increasing from `0xB882` to `0xBF52`, default
-  `0xBCA6`. Served by a dispatcher at `0xB8A6` (`index << 2`) which has **no static caller**.
+- **`0xD31C`**: previously read as one 30-slot table; it is **two 15-slot tables back to back**.
+  The instruction before `0xB8A6` is `tcmp r0, #14` + `tjls`, so the index can only be 0..14 and
+  covers just `0xD31C–0xD357`. `0xD358` has its own literal (`0xC034`) and is a second 15-slot table.
+  Both fall back to `0xBCA6`. The dispatcher `0xB8A6` belongs to `0xB874` (the LL/RF event
+  dispatcher, 11 callers passing event codes 2..13) — see the code map §15.2.
 - **None of those 34 entries is among the 290 `tjl` targets**: the firmware relies heavily on indirect
   calls, so a static call graph alone misses this code.
 
@@ -153,7 +157,12 @@ Both are `switch` jump tables, **not callback registries** (corrected 2026-11-08
 | `0x800744` | system timer area | 16 / 11 |
 | `0x800643` | `IRQMODE`, global IRQ enable | 32 / 22 |
 | `0x800640`–`0x642` | IRQ masks | per-function literals |
-| `0x8005xx` | GPIO config / I/O (`0x580`–`0x5A8`) | `0x800540`/`0x800548` x10 each, 5 functions |
+| `0x800540` / `0x800548` | **TRNG control/status + 32-bit random data** (not GPIO) | 21 sites each; `0xC80C` writes 0, polls bit 2, reads 4 words for the entropy pool |
+| `0x800580`–`0x800583` | P0 in / ie / oen / out | `0x800580` 7 sites (button bit 6) |
+| `0x80058B` | P1 out | 1 site |
+| `0x800593` | **P2 out** | 12 sites, mostly `&= ~0x10` |
+| `0x80059B` | **P3 out** | **26 sites across 13 functions** — the hottest actuator port in the image |
+| `0x800660` / `0x800664` / `0x800668` | **hardware divider**: go, operand A, operand B | body at `0x1E0`; entries `0x1D0/1D4/1D8/1DC` are quotient/remainder |
 | `0x800F00` / `0x800F20` | unidentified (likely RF/analog/flash control) | 8 / 16 |
 | `0x80000C` / `0x80000D` | unidentified | 12 / 20 |
 
