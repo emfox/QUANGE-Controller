@@ -70,6 +70,10 @@
              background:transparent;border:1px solid var(--line);color:var(--err);
              font-size:15px;line-height:1}
   .empty{color:var(--sub);font-size:14px;text-align:center;padding:16px 0}
+  .item .unknown{color:var(--warn)}
+  .sub{font-size:12px;color:var(--sub);margin:6px 0 0}
+  .btnrow button.danger{background:transparent;color:var(--err);border:1px solid var(--line)}
+  #logArchive .item .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -103,8 +107,9 @@
   <p class="hint" style="margin:10px 0 0">
     主广播名固定为 <b>QUANGE-WY020702</b>；<b>kHID</b> 是模块出厂默认名，实测仅在
     <b>每轮扫描的第一个包</b>偶现（扫描器把 scan response 回吐成主名），之后固定不变，
-    并非两种名字来回轮换。广播里的 <b>0x1812</b> 只是残留声明（设备实际没有 HID 服务），
-    与真实存在的 <b>0x180F</b> 电池服务一起用于兜底筛选。
+    并非两种名字来回轮换。筛选按这三个名称前缀 + 真实存在的 <b>0x180F</b> 电池服务兜底。
+    广播里的 <b>0x1812</b> 只是残留声明（设备实际没有 HID 服务），且它在 Web Bluetooth
+    黑名单内，<b>不能</b>用作扫描过滤器 —— 放进去会让整个请求被浏览器拒绝。
     别在扫描刚启动的第一秒就按名字下结论；找不到时点「显示全部蓝牙设备」按 MAC 选。
   </p>
 </div>
@@ -141,17 +146,34 @@
 
 <div class="card">
   <h2>消杀记录</h2>
+  <div class="sub" id="logSummary">设备队列：未读取</div>
   <div id="logList"><div class="empty">点「读取记录」拉取</div></div>
   <div class="btnrow">
     <button id="btnReadLogs" class="ghost">读取记录</button>
   </div>
   <p class="hint" style="margin:12px 0 0">
     日志是设备上的<b>待同步队列</b>（最新的在前）：逐条推送，每回一次确认才给下一条，
-    不确认就重发同一条（不是卡死）。本页单次最多读 20 条。
-    未对时 / 时钟丢失期间产生的记录时间戳异常，显示为「时间未知」；USB 常供电后时钟不再丢，
-    这类记录不再产生。<br>
+    不确认就重发同一条（不是卡死）。未对时 / 时钟丢失期间产生的记录时间戳异常，显示为「时间未知」；
+    USB 常供电后时钟不再丢，这类记录不再产生。<br>
     <b>注意：每确认一条就消费一条</b>，连点两次拿到的是两段不重叠的记录；队列排空后无法用协议
-    回溯历史（记录仍在 Flash 里，只是不再返回）。想留档请把本次输出存成文本。
+    回溯历史（记录仍在 Flash 里，只是不再返回）。<br>
+    所以本页会<b>先把每条记录落盘再确认</b>：即使刷新页面、误关标签页，已读记录也不会丢。
+    读取前会提示队列将被消费，可以取消。
+  </p>
+
+  <h2 style="margin-top:20px">本地存档</h2>
+  <div class="sub" id="logArchiveSummary">还没有存档</div>
+  <div id="logArchive"><div class="empty">暂无存档</div></div>
+  <div class="btnrow">
+    <button id="btnExportJson" class="ghost">导出 JSON</button>
+    <button id="btnExportCsv" class="ghost">导出 CSV</button>
+  </div>
+  <div class="btnrow">
+    <button id="btnClearArchive" class="danger">清空存档</button>
+  </div>
+  <p class="hint" style="margin:12px 0 0">
+    存档保存在本浏览器（<code>localStorage</code>），不随页面更新丢失；清除浏览器数据会一并清除，
+    重要数据请定期导出。CSV 用 UTF-8 BOM 编码，Excel 可直接打开；同一时刻的多条记录会按时间与状态去重。
   </p>
 </div>
 
@@ -192,24 +214,25 @@
   //   SCAN RSP 0xCD00 -> "kHID" + UUID list 0x1812/0x180F + Manufacturer Data
   // A scanner may report the SCAN RSP name as the main name, which is why kHID shows
   // up only in the first packet of each scan (1/121, 1/98) and never alternates.
+  //
+  // DO NOT add 0x1812 to `services` here. 0x1812 (HID) is on the Web Bluetooth
+  // blocklist, and a single blocklisted UUID makes requestDevice() reject the WHOLE
+  // call with "filter containing a blocklisted UUID" -- every filter dies, not just
+  // that one. Measured on a real Android Chrome 2026-11-08. 0x180F (battery) is
+  // allowed and is genuine on this device, so it stays as the service fallback.
+  // 0x1812 is only a leftover declaration anyway (it occurs exactly once in the
+  // whole 512 KiB image, in the SCAN RSP UUID list, and none of the five HID
+  // characteristic UUIDs exist), so nothing is lost by dropping it.
   const NAME_FILTERS = [
     { namePrefix: "QUANGE" },
     { namePrefix: "Hi-" },
     { namePrefix: "kHID" },
-    // 0x1812 is a leftover declaration, not a capability: "12 18" occurs exactly
-    // once in the whole 512 KiB image (the SCAN RSP UUID list) and all five HID
-    // characteristic UUIDs are absent. The device has no HID service; 0x180F
-    // (battery) is real. Both still work as scan filters, but neither is a stable
-    // identifier -- only the MAC is. The vendor mini program scans by 0x1812 and
-    // hardcodes "QUANGE-WY020702" in two places.
-    { services: [0x1812] },
     { services: [0x180F] }
   ];
 
   const $ = id => document.getElementById(id);
   let device = null, server = null, chWrite = null, chNotify = null;
   let items = [];
-  let logs = [];
   let pendingList = false;
   let logWaiter = null;
 
@@ -232,6 +255,9 @@
       .forEach(id => $(id).disabled = !on);
     if (!on) $("devName").textContent = "—";
     $("btnAdd").disabled = !on || items.length >= MAX_ITEMS;
+    // A read in progress must keep the button disabled even if the connection
+    // event fires mid-loop: re-entering would consume the queue from two loops.
+    if (readingLogs) $("btnReadLogs").disabled = true;
   }
 
   // ---------- Frames ----------
@@ -458,14 +484,65 @@
   }
 
   // ---------- Connection ----------
+  // Services Web Bluetooth refuses to expose, and therefore refuses to filter on.
+  // Passing any of them in `filters` rejects the entire requestDevice() call.
+  // Kept to what the spec actually blocks: HID, GAP, GATT, generic access helpers,
+  // device information and the physical-activity monitor. Only 0x1812 applies to
+  // this device; the rest are here so a future edit cannot reintroduce the failure.
+  const BLOCKLISTED = new Set([
+    0x1812,             // HID
+    0x1800,             // generic access (GAP)
+    0x1801,             // generic attribute (GATT)
+    0x1802,             // immediate alert
+    0x1803,             // link loss
+    0x1804,             // Tx power
+    0x1805,             // current time
+    0x180A,             // device information
+    0x1811,             // alert notification
+    0x1813,             // scan parameters
+    0x183E              // physical activity monitor
+  ]);
+  const svcNum = u => {
+    if (typeof u === "number") return u;
+    const s = String(u);
+    return s.length === 4 ? parseInt(s, 16) : NaN;   // full 128-bit UUIDs are never blocklisted
+  };
+
+  // Defensive: never hand a blocklisted UUID to the browser, whatever the table says.
+  function safeFilters(filters) {
+    const out = [];
+    for (const f of filters) {
+      if (!f.services) { out.push(f); continue; }
+      const keep = f.services.filter(s => !BLOCKLISTED.has(svcNum(s)));
+      if (keep.length !== f.services.length)
+        log("已跳过不能用于扫描过滤的服务（Web Bluetooth 黑名单）");
+      if (keep.length) out.push({ ...f, services: keep });
+    }
+    return out;
+  }
+
   async function connect(showAll) {
     try {
       log(showAll ? "扫描全部蓝牙设备…" : "按名称前缀扫描…");
+      const filters = safeFilters(NAME_FILTERS);
       const opts = showAll
         ? { acceptAllDevices: true, optionalServices: [SERVICE] }
-        : { filters: NAME_FILTERS, optionalServices: [SERVICE] };
+        : { filters: filters, optionalServices: [SERVICE] };
 
-      device = await navigator.bluetooth.requestDevice(opts);
+      try {
+        device = await navigator.bluetooth.requestDevice(opts);
+      } catch (e) {
+        // A rejected filter list looks exactly like "no device found" to the user,
+        // so only the name prefixes can save the day: retry with those alone.
+        const msg = String(e && e.message || e);
+        if (!showAll && /blocklist|UUID/i.test(msg)) {
+          log("过滤器被浏览器拒绝，改用纯名称前缀重试…");
+          device = await navigator.bluetooth.requestDevice(
+            { filters: filters.filter(f => !f.services), optionalServices: [SERVICE] });
+        } else {
+          throw e;
+        }
+      }
       device.addEventListener("gattserverdisconnected", () => {
         log("设备已断开");
         setConnected(false);
@@ -565,11 +642,88 @@
     });
   }
 
+  // ---------- Log archive ----------
+  // The device log is a pending-sync queue: each ACK consumes one record and the
+  // queue can never be replayed over BLE (the 200-slot Flash table stays, but the
+  // cursor moves on). The queue is also finite and ASYNCHRONOUS: the vendor cloud
+  // that used to store these is gone, so whatever is read here is the only copy.
+  // Therefore every record is persisted BEFORE its ACK is sent. If the page is
+  // refreshed or closed mid-read, nothing that was consumed is lost.
+  const ARCHIVE_KEY = "quange_log_archive_v1";
+  const ARCHIVE_MAX = 2000;          // ring; the device table holds 200 slots
+  const UNKNOWN_TS  = 0xFFFFFFFF;    // device-side "no more records" sentinel
+  const CLOCK_FLOOR = 1600000000;    // below this the record is an unset-clock artifact
+  const LOG_MAX     = 200;           // safety stop; the queue is never this long
+
+  let archive = [];                  // { ts, dur, type, st, seen } -- ts === null if unknown
+  let session = [];                  // this run, for the visible list
+  let readingLogs = false;
+
+  // localStorage is untrusted: anything read back must be re-validated, because a
+  // malformed value would abort the read loop in the middle of a destructive pass.
+  function isValidLog(r) {
+    if (!r || typeof r !== "object") return false;
+    const okTs = r.ts === null ||
+      (Number.isInteger(r.ts) && r.ts >= 0 && r.ts < UNKNOWN_TS);
+    return okTs &&
+      Number.isInteger(r.dur) && r.dur >= 0 && r.dur <= 0xFFFF &&
+      Number.isInteger(r.type) && r.type >= 0 && r.type <= 0xFF &&
+      Number.isInteger(r.st) && r.st >= 0 && r.st <= 0xFF;
+  }
+
+  function loadArchive() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || "[]");
+      if (!Array.isArray(raw)) return [];
+      const clean = raw.filter(isValidLog)
+        .map(r => ({ ts: r.ts, dur: r.dur, type: r.type, st: r.st,
+                     seen: typeof r.seen === "number" ? r.seen : Date.now() }));
+      if (clean.length !== raw.length)
+        log("已忽略本地存档中不合法的记录（" + (raw.length - clean.length) + " 条）");
+      return clean.slice(-ARCHIVE_MAX);
+    } catch (_) { return []; }
+  }
+
+  function saveArchive() {
+    try {
+      localStorage.setItem(ARCHIVE_KEY, JSON.stringify(archive));
+      return true;
+    } catch (e) {
+      log("存档写入失败（空间不足或被禁用）：" + (e.message || e));
+      return false;
+    }
+  }
+
+  // Two cases are expected and must not duplicate rows:
+  //  1. the same frame delivered twice within one session (never ACK it twice);
+  //  2. a re-read after the cursor was never advanced (device resends on no ACK).
+  // Both look identical to an already-archived record, so a duplicate is simply
+  // skipped for display; what matters is that we still ACK it so the device
+  // advances instead of resending forever.
+  // A genuine second run starting at the same second with the same duration is
+  // indistinguishable from these, and practically impossible for this device.
+  function alreadyArchived(r) {
+    return archive.some(a =>
+      a.dur === r.dur && a.type === r.type && a.st === r.st &&
+      (a.ts !== null && r.ts !== null ? a.ts === r.ts : a.ts === null && r.ts === null));
+  }
+
+  function archiveAdd(r) {
+    archive.push({ ts: r.ts, dur: r.dur, type: r.type, st: r.st, seen: Date.now() });
+    if (archive.length > ARCHIVE_MAX) archive = archive.slice(-ARCHIVE_MAX);
+  }
+
+  const logTimeText = r => r.ts !== null ? fmtTime(r.ts) : "时间未知";
+  const logStateText = r => r.st === 1 ? "结束" : "开始";
+
   function renderLogs() {
     const box = $("logList");
-    if (!logs.length) { box.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+    if (!session.length) {
+      box.innerHTML = '<div class="empty">点「读取记录」拉取</div>';
+      return;
+    }
     box.innerHTML = "";
-    logs.forEach((r, i) => {
+    session.forEach((r, i) => {
       const d = document.createElement("div");
       d.className = "item";
       const n = document.createElement("span");
@@ -579,16 +733,133 @@
       // Records written while the RTC was unset use the 1970-based clock (small,
       // 3600-multiple values), so they are not wall-clock times. USB-powered units
       // never lose the clock and no longer produce these (firmware-analysis §5).
-      t.textContent = r.ts > 1600000000 ? fmtTime(r.ts) : "时间未知";
+      t.textContent = logTimeText(r);
+      if (r.ts === null) t.className = "unknown";
       const u = document.createElement("span");
       u.style.cssText = "color:var(--sub);font-size:13px";
       u.textContent = fmtDur(r.dur);
       const st = document.createElement("span");
       st.style.cssText = "color:var(--sub);font-size:13px;width:32px;text-align:right";
-      st.textContent = r.st === 1 ? "结束" : "开始";
+      st.textContent = logStateText(r);
       d.appendChild(n); d.appendChild(t); d.appendChild(u); d.appendChild(st);
       box.appendChild(d);
     });
+  }
+
+  function fmtFull(ts) {
+    const d = new Date(ts * 1000);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
+           `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
+
+  function renderArchive() {
+    const box = $("logArchive");
+    const sum = $("logArchiveSummary");
+    $("btnExportJson").disabled = !archive.length;
+    $("btnExportCsv").disabled = !archive.length;
+    $("btnClearArchive").disabled = !archive.length;
+    if (!archive.length) {
+      sum.textContent = "还没有存档";
+      box.innerHTML = '<div class="empty">暂无存档</div>';
+      return;
+    }
+    const known = archive.filter(r => r.ts !== null);
+    const first = known.length ? Math.min(...known.map(r => r.ts)) : 0;
+    const last = known.length ? Math.max(...known.map(r => r.ts)) : 0;
+    sum.textContent = `共 ${archive.length} 条` + (known.length
+      ? ` · ${fmtFull(first).slice(0, 10)} → ${fmtFull(last).slice(0, 16)}`
+      : "（全部时间未知）");
+    // Newest first, matching the device's own ordering.
+    const rows = archive.slice().reverse().slice(0, 30);
+    box.innerHTML = "";
+    rows.forEach(r => {
+      const d = document.createElement("div");
+      d.className = "item";
+      const t = document.createElement("span");
+      t.className = "grow" + (r.ts === null ? " unknown" : "");
+      t.textContent = logTimeText(r);
+      const u = document.createElement("span");
+      u.style.cssText = "color:var(--sub);font-size:13px";
+      u.textContent = fmtDur(r.dur) + " · " + logStateText(r);
+      d.appendChild(t); d.appendChild(u);
+      box.appendChild(d);
+    });
+    if (archive.length > rows.length) {
+      const more = document.createElement("div");
+      more.className = "sub";
+      more.textContent = `仅显示最近 ${rows.length} 条，完整内容请导出`;
+      box.appendChild(more);
+    }
+  }
+
+  function download(name, text, mime) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Chrome needs the URL to outlive the click; revoke a beat later.
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  const stamp = () => {
+    const d = new Date();
+    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-` +
+           `${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+  };
+
+  function exportJson() {
+    const doc = {
+      device: "QUANGE WY020702",
+      schema: "quange-log-archive/1",
+      exported_at: new Date().toISOString(),
+      source: "Web Bluetooth BD 08 05 / BD 08 06 pending-sync queue",
+      note: "ts is a Unix timestamp (s); null means the record was written before the RTC was synced.",
+      count: archive.length,
+      records: archive.map(r => ({
+        ts: r.ts,
+        time: r.ts !== null ? fmtFull(r.ts) : null,
+        dur_s: r.dur,
+        type: r.type,
+        st: r.st,
+        st_text: logStateText(r),
+        archived_at: new Date(r.seen).toISOString()
+      }))
+    };
+    download(`quange-logs-${stamp()}.json`, JSON.stringify(doc, null, 2), "application/json");
+    log("已导出 JSON（" + archive.length + " 条）");
+  }
+
+  function exportCsv() {
+    const esc = v => {
+      const s = String(v);
+      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const head = ["时间", "Unix秒", "时长(秒)", "类型", "状态码", "状态", "导入时间"];
+    const lines = [head.join(",")];
+    archive.forEach(r => lines.push([
+      r.ts !== null ? fmtFull(r.ts) : "时间未知",
+      r.ts !== null ? r.ts : "",
+      r.dur, r.type, r.st, logStateText(r),
+      new Date(r.seen).toISOString()
+    ].map(esc).join(",")));
+    // BOM so Excel detects UTF-8 instead of mangling the Chinese headers.
+    download(`quange-logs-${stamp()}.csv`, "\uFEFF" + lines.join("\r\n") + "\r\n",
+             "text/csv;charset=utf-8");
+    log("已导出 CSV（" + archive.length + " 条）");
+  }
+
+  function clearArchive() {
+    if (!archive.length) return;
+    if (!confirm(`确定要删除本地存档的全部 ${archive.length} 条记录吗？\n\n` +
+                 "已从设备确认过的记录无法再次读取，删除后不可恢复。建议先导出。"))
+      return;
+    archive = [];
+    saveArchive();
+    renderArchive();
+    log("本地存档已清空");
   }
 
   // The log is a pending-sync queue: one record at a time, each needs a
@@ -597,21 +868,99 @@
   // table itself is not erased (firmware-analysis §4), so history cannot be
   // retrieved again over BLE once the queue is drained.
   async function fetchLogs() {
-    logs = [];
+    if (readingLogs) return;
+    readingLogs = true;
+    $("btnReadLogs").disabled = true;
+
+    session = [];
     renderLogs();
+    $("logSummary").textContent = "设备队列：读取中…";
     log("开始读取消杀记录（未读队列，确认后不再返回）…");
     await send(FRAME_LOG, "查询日志");
-    for (let i = 0; i < 20; i++) {
+
+    let got = 0, dup = 0, failed = 0, saved = 0, unknown = 0, lastErr = null;
+
+    for (let i = 0; i < LOG_MAX; i++) {
       const r = await waitForLog(2500);
-      if (!r) { log("日志读取超时，可能已读完"); break; }
-      if (r.ts === 0xFFFFFFFF) { log("设备回复没有更多记录"); break; }
-      // Keep and ack records with an invalid timestamp too, otherwise the stream stalls
-      if (!logs.some(x => x.tsHex === r.tsHex)) logs.push(r);
+      if (!r) { lastErr = "日志读取超时"; break; }
+      if (r.ts === UNKNOWN_TS) { log("设备回复没有更多记录"); break; }
+      if (typeof r.ts !== "number" || isNaN(r.ts)) { lastErr = "回包解析失败"; break; }
+
+      // Normalise before it touches the archive: an unset clock yields a small,
+      // 3600-multiple value that is not a wall-clock time, so store it as null
+      // rather than as a date in 1970.
+      const rec = {
+        ts: r.ts > CLOCK_FLOOR ? r.ts : null,
+        dur: r.dur, type: r.type, st: r.st
+      };
+
+      got++;
+      if (rec.ts === null) unknown++;
+      // Only skip when we are certain this run was already stored; anything else
+      // is a record we must not lose, so it goes in rather than being deduped away.
+      const isDup = alreadyArchived(rec);
+      if (isDup) dup++;
+
+      // CRITICAL ORDER: persist first, ACK second. A record that reaches the log
+      // was already consumed on the device, so it must survive a page reload.
+      if (!isDup) {
+        archiveAdd(rec);
+        session.push(rec);
+        const added = archive[archive.length - 1];
+        if (!saveArchive()) {
+          failed++;
+          // Roll back only the record that failed to persist. It was never ACKed,
+          // so the device still holds it: dropping it from the in-memory ring keeps
+          // a re-read (after freeing space) from seeing a phantom duplicate, and
+          // keeping it out of the "read" list avoids implying it was collected.
+          // Everything written before it stays -- that state is already on disk.
+          if (archive[archive.length - 1] === added) archive.pop();
+          if (session[session.length - 1] === rec) session.pop();
+          renderLogs(); renderArchive();
+          log("日志：" + logTimeText(rec) + " " + fmtDur(rec.dur) + " " + logStateText(rec));
+          // Do NOT ACK. The record is only in memory, and the device still holds
+          // it: stopping here lets the user free space (export / clear) and read
+          // again, whereas ACKing would destroy it for good.
+          lastErr = "本地存档写入失败，已停止读取以避免丢失记录";
+          break;
+        }
+        saved++;
+      } else {
+        log("日志：重复记录（已存档，跳过）" + logTimeText(rec));
+      }
+
+      log("日志：" + logTimeText(rec) + " " + fmtDur(rec.dur) + " " + logStateText(rec));
+
+      if (!isDup) { renderLogs(); renderArchive(); }
+      // ACK is sent for duplicates too: without it the device resends forever.
       await send(frameLogAck(r.tsHex), "确认日志");
     }
+
+    readingLogs = false;
+    setConnected(!!chWrite);
+    $("btnReadLogs").disabled = !chWrite;
+
     renderLogs();
-    log("共读到 " + logs.length + " 条记录");
-    if (!logs.length) log("没读到记录：待同步队列已空；下一次定时消杀产生新记录后可再读");
+    renderArchive();
+
+    // A record that failed to persist was never ACKed, so it is still pending on
+    // the device -- report it separately instead of claiming it was archived.
+    $("logSummary").textContent = `设备队列：本次 ${got} 条` +
+      (saved ? `，新增存档 ${saved} 条` : "") + (dup ? `，重复 ${dup} 条` : "") +
+      (unknown ? `（其中 ${unknown} 条时间未知）` : "") +
+      (failed ? `，${failed} 条未确认（仍在设备上）` : "");
+    if (lastErr) log(lastErr + (lastErr.includes("超时") ? "，可能已读完" : ""));
+
+    if (!got) {
+      log("没读到记录：待同步队列已空；下一次定时消杀产生新记录后可再读");
+    } else {
+      log(`本次读到 ${got} 条，新增存档 ${saved} 条` + (dup ? `（${dup} 条已在存档中）` : "") +
+          `，存档共 ${archive.length} 条`);
+      if (failed)
+        log("注意：本地存档写入失败，读取已停在当前这条。请先导出/清空存档后再点「读取记录」" +
+            "续读 —— 设备上还留着这条，不会丢。");
+      else if (saved) log("已自动保存到本地存档，刷新页面不会丢");
+    }
   }
 
   async function readVersion() {
@@ -637,7 +986,8 @@
   }
 
   function init() {
-    if (!navigator.bluetooth) {
+    const bleSupported = !!navigator.bluetooth;
+    if (!bleSupported) {
       $("unsupported").classList.add("show");
       $("btnConnect").disabled = true;
       $("btnAll").disabled = true;
@@ -654,13 +1004,34 @@
     } catch (_) {}
     renderItems();
     setConnected(false);
+    // setConnected() re-enables the connect buttons, so re-apply the capability
+    // check after it: on a browser without Web Bluetooth there is nothing to connect to.
+    if (!bleSupported) {
+      $("btnConnect").disabled = true;
+      $("btnAll").disabled = true;
+    }
+
+    archive = loadArchive();
+    renderArchive();
+    renderLogs();
 
     $("btnConnect").onclick = () => connect(false);
     $("btnAll").onclick = () => connect(true);
     $("btnDisconnect").onclick = disconnect;
     $("btnRefresh").onclick = refreshAll;
     $("btnRead").onclick = readList;
-    $("btnReadLogs").onclick = fetchLogs;
+    $("btnReadLogs").onclick = () => {
+      // Destructive and irreversible: the queue is consumed ACK by ACK, so make
+      // the consequence explicit before touching the device.
+      if (!confirm("读取会把记录从设备队列中逐条确认并消费掉，" +
+                   "之后无法再通过蓝牙读回。\n\n" +
+                   "记录会先写入本机存档，可以导出；确定开始读取吗？"))
+        return;
+      fetchLogs();
+    };
+    $("btnExportJson").onclick = exportJson;
+    $("btnExportCsv").onclick = exportCsv;
+    $("btnClearArchive").onclick = clearArchive;
     $("btnSave").onclick = saveList;
     $("btnAdd").onclick = () => {
       if (items.length >= MAX_ITEMS) return;

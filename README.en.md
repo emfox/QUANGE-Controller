@@ -30,7 +30,9 @@ protocol** from the mini program bundle and ships two ready-to-use controllers:
 
 The page shows live state: idle / sterilizing with countdown, next run, battery, firmware version
 and the most recent run. Up to **4** schedule entries, 3–6 minutes each, fully editable
-(multiple entries verified). A *Read log* button pulls the device's sterilization history.
+(multiple entries verified). A *Read log* button pulls the device's sterilization history — every
+record is **saved to a local archive before its ACK is sent**, exportable as JSON / CSV, and a page
+refresh no longer loses it (see the log-queue note under *Known limitations*).
 
 > Web Bluetooth is not available in iOS Safari. Apple devices cannot use the web app.
 
@@ -52,8 +54,8 @@ python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not co
 ```
 
 Device names default to the `QUANGE` / `Hi-` / `kHID` prefixes, plus a fallback match on the
-`0x1812` / `0x180F` services in the advertisement (so a renamed device is still found — same as
-the web app). If the scan comes up empty, address it directly:
+`0x1812` / `0x180F` services in the advertisement (so a renamed device is still found — the script
+uses `bleak`, which has no browser-side restriction). If the scan comes up empty, address it directly:
 
 ```bash
 python tools/set_timer.py -a AA:BB:CC:DD:EE:FF --query
@@ -201,8 +203,11 @@ In short: **the bundle must be decrypted; the protocol does not.**
   business service `0xFB` works normally once connected, and the `0x1812` in the advertisement
   is **only a declaration; the device has no HID service**. The vendor app only accepts
   `QUANGE-WY020702`, so it actually can't see the device in
-  the `kHID` state. This project matches **three name prefixes + the `0x1812`/`0x180F` services**,
-  but all of those come from the same config block — **only the MAC is reliable**
+  the `kHID` state. **The web app can only match three name prefixes + `0x180F`**: `0x1812` is on
+  the Web Bluetooth blocklist, and putting it in `filters` makes the browser reject the entire
+  `requestDevice()` call (`SecurityError: blocklisted UUID`, reproduced on a real device
+  2026-11-08). The script uses `bleak`, which has no such restriction. Either way all of those
+  come from the same config block — **only the MAC is reliable**
   (`-a <MAC>` in the script, *Show all devices* in the web app);
 - **The device stops advertising while connected**: a BLE peripheral halts advertising once a
   central connects, so **only one host can control it at a time**. While your phone is connected
@@ -219,18 +224,20 @@ In short: **the bundle must be decrypted; the protocol does not.**
   the original app could never produce; bypass with `set_timer.py --force`;
 - **Power-loss / battery-swap scenarios do not apply**: the test unit has been converted to USB
   power, so it neither powers off nor loses its clock (protocol §9);
-- **Usage history is permanently lost**: the history never lives on the device — the mini program
-  streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`, then reads it back through
-  `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
-  are no longer recorded and the day/week/month charts are gone for good. `--logs` / `--logs-all`
-  still read the records currently on the device, but there's nowhere to keep them.
-  Logs are **read once**: the device keeps a pending-upload queue and each ACK consumes
-  one record, so already-read records never come back — save the output on the first read
-  if you want an archive. Once empty, no protocol command can rewind it, but **the next
-  scheduled run writes a new record and makes the log readable again** — a USB-powered
-  unit needs no restart (a power cycle does not bring consumed records back either).
-  See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
-  For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
+- **Cloud usage history is permanently lost, but a local archive now exists**: the history never
+  lives on the device — the mini program streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`,
+  then reads it back through `get_device_use_log` to draw the charts. With the backend gone that
+  chain is dead: anything recorded while it was down cannot be recovered, and the day/week/month
+  charts are no longer generated. Logs are **read once**: the device keeps a pending-upload queue
+  and each ACK consumes one record, so already-read records never come back. Once empty, no
+  protocol command can rewind it, but **the next scheduled run writes a new record and makes the
+  log readable again** — a USB-powered unit needs no restart (a power cycle does not bring
+  consumed records back either). See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
+  For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2.
+  **The web app now persists every record to a browser-local archive *before* sending its ACK**,
+  warns before starting (cancellable) and exports JSON / CSV (Excel-ready); a refresh or an
+  accidental tab close no longer loses what was read. `--logs` / `--logs-all` still print plain
+  text, so redirect them to a file if you need to keep the output;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never
   written to the device**. Unavailable now;
