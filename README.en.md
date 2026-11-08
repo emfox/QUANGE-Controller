@@ -139,8 +139,9 @@ Full field descriptions, reply parsing and the init sequence:
 | Brand / responsible entity | **Shanghai Laifeng Household Products Co., Ltd.** ("QUANGE" is its own brand; USCC `91310120MA1HQ17M3W`, `sh-lifefun.com`) |
 | Advertising name | `QUANGE-WY020702`; `kHID` appears only in the **first packet** of each scan, then stays fixed (measured, §8.5 — not an alternating name) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
-| SoC | Telink. **Exact part number unknown** — PnP ID `0x8266` is an SDK default constant and identifies nothing |
-| Power | Stock: 3 × AA cells. **The test unit has been converted to USB power** (no auto power-off, no clock loss) |
+| SoC | Telink. **Measured binary-compatible with TLSR8258**; the exact silkscreen part is still unknown (§8.6). Disassembly has been dropped — no further pursuit |
+| Power | Stock: 3 × AA cells (nameplate `AA LR6 1.5 V × 3`, `4.5 V / 0.81 W`). **The test unit has been converted to USB power**: 5 V stepped down to ~4.5 V by a DC-DC module into the battery contacts (no auto power-off, no clock loss) |
+| Nameplate / type approval | Rear nameplate: `WY020702`, `4.5 V / 0.81 W`, Shanghai Laifeng Household Products Co., Ltd.; radio type approval code **`CMIIT ID: 2021DP13837`** (certificate `2021-13837`, equipment "Bluetooth device", applicant/manufacturer Shanghai Laifeng, issued 2021-10-22, valid five years) |
 | Manufactured in | Zhongshan, Guangdong |
 | UVC | Seoul Viosys 275 nm |
 | Original app | WeChat mini program *莱枫智能生活* (appid `wx9528fce803d3ba0e`, offline) |
@@ -149,7 +150,17 @@ Full field descriptions, reply parsing and the init sequence:
 > its domain and a related-party disclosure by listed company Chahua. **"莱枫智能生活" is the mini
 > program's name, not a company.** Brand owner ≠ module/firmware/OEM (Telink module,
 > OUI `1C:45:C2` = Huizhou Sanxin, OEM in Zhongshan).
-> Sources: [box/manual photos](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32), [business registry](https://aiqicha.baidu.com/company_detail_10059015340660), [Chahua disclosure](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF).
+>
+> **Physical and official cross-check**: the rear nameplate itself reads "Shanghai Laifeng
+> Household Products Co., Ltd.", and the SRRC record for `2021DP13837` lists the same company as
+> applicant/manufacturer with equipment model WY020702. The certificate only publishes RF
+> parameters (2400–2483.5 MHz, ≤20 dBm EIRP, occupied bandwidth ≤3 MHz) and **does not disclose
+> the chip/module part number** — it cannot replace reading the silkscreen.
+> See [nameplate and approval label](docs/images/nameplate.jpg) and
+> [battery bay / USB feed](docs/images/battery-bay.jpg) (the nameplate photo shows this unit's
+> MAC/SN, published with the owner's consent).
+>
+> Sources: [box/manual photos](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32), [business registry](https://aiqicha.baidu.com/company_detail_10059015340660), [Chahua disclosure](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF), [SRRC approval lookup](https://ythzxfw.miit.gov.cn/jgcx/index.html) (code `2021DP13837`).
 
 ---
 

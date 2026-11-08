@@ -43,12 +43,27 @@
 > package. **The chip cannot be identified at the BLE layer at all — only by reading the
 > silkscreen after disassembly.** A successful third-party OTA on 2026-11-08 (§8.6) narrowed
 > this to **binary compatibility with TLSR8258** — a functional inference, not a silkscreen.
+> Disassembly has been dropped; the exact part is no longer pursued (§9).
+>
+> **The SRRC certificate cannot identify the chip either.** The rear nameplate carries
+> `CMIIT ID: 2021DP13837`; certificate `2021-13837` publishes RF parameters only
+> (2400–2483.5 MHz, ≤20 dBm EIRP, occupied bandwidth ≤3 MHz) and **does not disclose the
+> chip/module part number**. The certificate holder is the brand owner, not necessarily the
+> firmware or module developer. An occupied bandwidth of ≤3 MHz is consistent with BLE-only
+> operation, but that is a side note, not a substitute for the silkscreen.
 
 > **Entity**: "QUANGE" is the in-house brand of **Shanghai Laifeng Household Products Co., Ltd.**,
 > which is also the responsible entity printed on this unit's box/manual (USCC
 > `91310120MA1HQ17M3W`, `sh-lifefun.com`). **"莱枫智能生活" is the mini program's name, not a
 > company.** Brand owner ≠ module/firmware/OEM (Telink module, OUI `1C:45:C2` = Huizhou Sanxin,
 > OEM in Zhongshan). Sources: see the [README](../README.en.md) *Device facts* section.
+>
+> **Physical and official cross-check**: the rear nameplate itself reads "Shanghai Laifeng
+> Household Products Co., Ltd."; SRRC certificate `2021-13837` lists the same company as
+> applicant/manufacturer with equipment model WY020702. The certificate publishes RF parameters
+> only, not the chip/module part number. See [nameplate and approval label](images/nameplate.jpg)
+> and [battery bay / USB feed](images/battery-bay.jpg) (the nameplate photo shows this unit's
+> MAC/SN, published with the owner's consent).
 >
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
 > product's brand name. The cause is that the upstream vendor (**Shanghai Laifeng Household
@@ -831,12 +846,8 @@ and the device was restored to the vendor firmware and verified.**
 > (a binary built for 8258 with `-llt_8258` booted fully and operated the flash); the exact
 > silkscreen part is still unknown.
 
-> Artifacts are kept locally, **not committed to the public repo**: `rom_512k.bin`
-> (512 KB, `sha256 ae711549b42f2c1598df7edaf4bf61a8f8aaad96163cfb263afd4ffc2475d096`) and
-> `rom_vendor_firmware.bin` (`0x00000–0x0E000`, 57,344 B,
-> `sha256 79fa1730ec9f817319ae4414b0c0b91a3f8ea3ca46d0b40e8b304c1b7b468669`).
-> The vendor firmware is third-party copyrighted and is not distributed with this repo.
-> The reproduction script `ota_dump.py` is kept alongside them.
+> Image backups and checksums: [firmware/README.md](../firmware/README.md); reproduction
+> script `tools/ota_dump.py`.
 
 ---
 

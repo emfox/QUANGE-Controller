@@ -133,8 +133,9 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 | 品牌 / 责任主体 | **上海莱枫生活用品有限公司**（「全格 QUANGE」是其自有品牌；统一社会信用代码 `91310120MA1HQ17M3W`，官网 `sh-lifefun.com`） |
 | 广播名 | `QUANGE-WY020702`；`kHID` 仅在每轮扫描的**首个包**出现，之后固定 |
 | GAP 设备名 | `Hi-YM01-XXXXXXXXXXXX` |
-| 芯片 | Telink（泰凌微）。**具体型号未知** —— PnP ID `0x8266` 是 SDK 默认常量，判断不了型号 |
-| 供电 | 原厂 3 × AA 电池；**实测机已改 USB 常供电**（不再自动关机、不掉时钟） |
+| 芯片 | Telink（泰凌微）。**实测与 TLSR8258 二进制兼容**，精确丝印型号仍未知（§8.6）；已决定不拆机，不再追查 |
+| 供电 | 原厂 3 × AA 电池（铭牌 `AA LR6 1.5 V × 3`、`4.5 V ⎓ / 0.81 W`）；**实测机已改 USB 常供电**：5 V 经 DC-DC 降至约 4.5 V 接电池仓触点，不再自动关机、不掉时钟 |
+| 铭牌 / 核准 | 机身背面铭牌：`WY020702`、`4.5 V ⎓ / 0.81 W`、公司名称上海莱枫生活用品有限公司；无线电发射设备型号核准代码 **`CMIIT ID: 2021DP13837`**（核准证 `2021-13837`，设备名称「蓝牙设备」，申请单位 / 生产厂商上海莱枫，发证 2021-10-22，有效期五年） |
 | 生产地 | 广东省中山市 |
 | UVC | 首尔伟傲世 275nm |
 | 原厂 App | 微信小程序「莱枫智能生活」（appid `wx9528fce803d3ba0e`，已下线） |
@@ -143,7 +144,15 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 > 茶花股份的关联交易公告一致。「**莱枫智能生活**」是**小程序名称，不是公司名**。
 > 「品牌方 ≠ 模组 / 固件 / 代工方」成立（Telink 模组、MAC OUI `1C:45:C2` 属惠州三信、
 > 广东中山代工）。
-> 依据：[包装与说明书实拍](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32)、[工商登记](https://aiqicha.baidu.com/company_detail_10059015340660)、[茶花股份公告](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF)。
+>
+> **实物与官方双重印证**：机身背面铭牌直接印有「上海莱枫生活用品有限公司」；
+> SRRC 核准数据库中 `2021DP13837` 的申请单位 / 生产厂商同样是该公司，设备型号正是 WY020702。
+> 核准证只列射频参数（2400–2483.5 MHz、≤20 dBm EIRP、占用带宽 ≤3 MHz），
+> **不公开芯片 / 模组型号**，不能替代主控丝印。
+> 见 [铭牌与核准标签实拍](docs/images/nameplate.jpg)、[电池仓与 USB 取电点](docs/images/battery-bay.jpg)
+> （铭牌照片含本机 MAC / SN，经设备所有者同意公开）。
+>
+> 依据：[包装与说明书实拍](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32)、[工商登记](https://aiqicha.baidu.com/company_detail_10059015340660)、[茶花股份公告](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF)、[SRRC 核准结果查询](https://ythzxfw.miit.gov.cn/jgcx/index.html)（核准代码 `2021DP13837`）。
 
 ---
 
