@@ -236,6 +236,24 @@ def region_report(ins):
         print("   ram  ", ", ".join(f"{hex(k)}x{v}" for k, v in rams.most_common(4)) or "-")
 
 
+def block_outline(ins):
+    """Split a function into basic blocks and print one line per block."""
+    targets = {x[3]["target"] for x in ins if x[3].get("target")}
+    starts = sorted({x[0] for x in ins if x[0] in targets} | {ins[0][0]})
+    bounds = starts + [max(x[0] for x in ins) + ins[-1][1]]
+    print(f"== blocks == {len(starts)} blocks, 0x{ins[0][0]:04x}-0x{bounds[-1]:04x}")
+    for n, lo in enumerate(starts):
+        blk = [x for x in ins if lo <= x[0] < bounds[n + 1]]
+        calls = [f"0x{x[3]['target']:05x}" for x in blk if x[3].get("flow") == "call"]
+        brs = [f"{x[3]['target']:05x}" for x in blk if x[3].get("flow") in ("branch", "cond_branch")]
+        head = " ; ".join((x[3].get("text") or "").strip() for x in blk[:3])
+        print(f"0x{lo:04x} ({len(blk):2d}) {head[:72]}")
+        if calls:
+            print(f"       call {','.join(calls)}")
+        if brs:
+            print(f"       ->   {','.join(brs)}")
+
+
 def region(v):
     for name, (lo, hi) in KNOWN.items():
         if lo <= v <= hi:
@@ -262,6 +280,7 @@ def main():
     ap.add_argument("--indirect", action="store_true",
                     help="thumb function pointers stored by code (indirect entries)")
     ap.add_argument("--regions", action="store_true", help="per-region call/IO fingerprint")
+    ap.add_argument("--blocks", help="basic-block outline for START:END (hex)")
     args = ap.parse_args()
 
     rom = Path(args.rom).read_bytes()
@@ -277,6 +296,11 @@ def main():
                     extra += f" val=0x{info['value']:08x}"
             text = info.get("text") or f"<undef 0x{info['raw']:04x}>"
             print(f"{a:06x}: {info['raw']:04x}  {text:<52}{extra}")
+        return
+
+    if args.blocks:
+        lo, hi = (int(x, 16) for x in args.blocks.split(":"))
+        block_outline(linear(rom, lo, hi))
         return
 
     ins = linear(rom, args.start, min(args.end, len(rom)))

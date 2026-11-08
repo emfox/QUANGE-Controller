@@ -295,7 +295,71 @@ automatic cycle".
 
 ---
 
-## 11. Numbers and reproduction
+## 11. The main loop `0x48EC` (81 basic blocks)
+
+Every branch here is direct — **no indirect jump anywhere** — so the control flow can be rebuilt
+completely over `0x48EC–0x4FDA`. Each iteration does the same three things first:
+
+```
+[0x844B68] += 1            ; iteration counter
+0x423C()                   ; soft-timer poll
+0x1B24()                   ; drives the BLE stack (reads 0x84393C+0x78, 0x8438BC+0x77)
+...state handling...
+0x43A0()                   ; button scan (0x800580 bit 6)
+```
+
+### 11.1 The three top-level gates
+
+| Variable | Value | Path |
+| --- | --- | --- |
+| `[0x844B98]` | `0` | enters the `0x49A4` branch (250 ms cadence: `[0x800740] − [0x844B8C] > 3D0900`) |
+| `[0x84358D]` state | `0` / `1` | idle / running. **The whole firmware only ever compares these two values** |
+| `[0x842F70]` | `1` | enters `0x4AB0` (hardware already driving); `0` goes to `0x49D0` |
+
+`0x844B98` **has no writer anywhere** (only one read at `0x490C`); it is most likely written by the
+stack or an IRQ through a computed address — not confirmed. `0x842F70` is written by the button
+handler (`0x4452`) and the start-up path (`0x6646`).
+
+### 11.2 The 20 ms heartbeat
+
+```
+0x4956  r0 = [0x800740] − [0x844B80]
+        if (r0 > 0x4E200) {            ; 320,000 ticks = 20 ms
+            [0x844B80] = [0x800740]
+            [0x842F68+4] |= 1
+        }
+```
+
+The `0x49A4` branch uses the same tick source with `0x3D0900` (4,000,000 ticks = 250 ms).
+
+### 11.3 Key action blocks
+
+| Block | Purpose | Evidence |
+| --- | --- | --- |
+| `0x4B60` | **full stop**: `[+0x3C]=0`, `[+0x40]=0`, `[+0x44]=100`, `[+0x46]=110`, `0x800780 &= ~4`, **cancels all three timers (`0x6538`, `0x438C`, `0x6308`, including the 1 Hz one)**, clears `+2/+3/+9`, `0x800593 &= ~0x10`, clears bits 2/7 of `0x80059B` | 63 instructions, three `tjl 0x4308` |
+| `0x4D48` | second stop variant: same three `timer_cancel` plus `0x8FE0` / `0xADDC` / `0xA014` | 64 instructions |
+| `0x4AFC` | **start sequence**: `0xADDC(15)`, `0xADB8(16)`, `0x7484(64,0,1)`, `[0x842F68+4] |= 8`, `0x5060(0x43,16,0)` | — |
+| `0x4DD4` | `[0x842F70] = 1` and stamps `[0x800740]`, back to `0x4918` | — |
+| `0x4F10` | `[+2] = 1` plus `0xADB8` / `0x7484` / `timer_cancel` | — |
+| `0x4EBE` | running-state check, loads `[+2]` into `sl` for comparison | — |
+| `0x4E0A`/`0x4E1C`/`0x4E3E` | countdown logic (`tsub r2,#10`, then compare with 10) | — |
+| `0x4EA0` | `0xADB8(64)` + `0x5060` | — |
+| `0x4D08` | `0xADDC(0)` + inner loop (`0x6144` / `0x85A8`) | — |
+| `0x4F62`–`0x4FB2` | tail loop: `0x85A8` / `0x6144`, limit `0x78` (120), continues only above 3 | — |
+
+`0xADDC` / `0xADB8` / `0xA014` / `0x8FE0` live in the `0xA000` region (the glue above the stack),
+`0x7484` in `0x07200`, `0x5060` in the command-dispatch region — by call fingerprint they look like
+"set event / set flag / notify".
+
+### 11.4 Five boolean sub-flags in the state block
+
+Besides the state byte at `+1`, the `0x84358C` sub-structure holds five 0/1 booleans at `+2`, `+3`,
+`+6`, `+9`, `+0xB`; the main loop tests each of them to pick a branch, and `0x4B60` clears
+`+2/+3/+9` on stop. **Their exact meaning is unknown** — only `+1` is observable from the BLE side.
+
+---
+
+## 12. Numbers and reproduction
 
 ```
 functions (tjl targets + tpush prologues + table targets)   382 inside the real code ranges
@@ -315,11 +379,12 @@ python tools/tc32_disasm.py --functions --xrefs --tables
 python tools/tc32_disasm.py --tables            # case lists of both switch tables
 python tools/tc32_disasm.py --table 0xD31C:30   # any u32 table
 python tools/tc32_disasm.py --indirect          # thumb pointers stored by code
+python tools/tc32_disasm.py --blocks 48ec:4fe0  # the §11 main-loop block outline
 ```
 
 ---
 
-## 12. Still unknown
+## 13. Still unknown
 
 - What the second entry `0x1A0` (pointed at from header `0x10`) does.
 - The entry into the `0xD31C` jump table: nothing branches or calls `0xB8A6`, so it must be entered
@@ -329,5 +394,7 @@ python tools/tc32_disasm.py --indirect          # thumb pointers stored by code
 - What `0x6538` is — the timer callback that `0x5F90` and the main loop keep cancelling.
 - Purpose of the 4 KiB hole at `0x3000` (not code, and no references at all).
 - Which pins actually drive the UV load (`0x800540/0x800548` have 20+ accesses, not mapped pin by pin).
-- The state-transition graph inside the 96 basic blocks of the `0x48EC` main loop (only the three
-  top-level state bytes `[0x844B98]`, `[0x84358C+1]`, `[0x842F70]` are identified).
+- What the five boolean sub-flags `+2` / `+3` / `+6` / `+9` / `+0xB` mean (§11.4).
+- Who writes `[0x844B98]` (one read, no direct writer).
+- What `0x52C(0x6EF, 0x627)` does: it writes `0x800061 = 32` then `0`, then reads `0x843534`.
+  It looks like a power/reset sequence and the arguments look like thresholds — unclassified.
