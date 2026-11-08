@@ -171,3 +171,53 @@ The spec of `wainft.switch.sw0a02` is almost exactly this device:
 One more thing worth recording from the `zxlink.switch.zxltdq` FAQ: "in the Mi Home app, switch the device from gateway mode to **BLE direct mode**" — so this category already has a phone-direct-connection mode without a gateway.
 
 **But be clear**: borrowing a PID only makes the category and provisioning channel line up; it does not supply an identity. Binding still needs the cloud's (PID, MAC) record, and Mesh still needs the certificate chain. This section is reference data, not a pass.
+
+## 10. The application route: is there really no door for individuals
+
+### 10.1 The official line: enterprises only
+
+The "Become a developer" page says: "**currently the Xiaomi IoT platform is open to enterprise developers only**" and "only to companies registered in mainland China". An enterprise group must supply full name, short name, identifier (3–6 lowercase letters or digits), legal representative, address and business licence.
+
+Read literally, there is no door for an individual.
+
+### 10.2 But the personal-developer channel exists, and its permissions fit exactly
+
+The personal developer programme opened for internal testing on **2023-12-01**: first batch 1,000 places, one free module dev board each, five working days for review. The documentation page currently carries: "**internal-testing quota is full, temporarily closed**".
+
+What it actually grants:
+
+| Personal-developer permission | What it means for us |
+| --- | --- |
+| **no need to create a product**; use a built-in template | no PID to apply for |
+| templates include **light, switch, socket/strip, relay/contactor, curtain motor**, plus a custom template | "relay/contactor" is exactly our category |
+| cannot add or modify template functions | enough: `on` + inching + delay are in the template |
+| cannot ship the product, cannot share the device | we only need it for ourselves |
+| **can control the device with your own account** | that is the goal |
+| firmware flashed to the device + extension flashed to the **debug build of the Mi Home app** | ← the key line |
+
+That last row matters: personal developers use a **debug build of the Mi Home app**. Which means the wall "the PID must be visible to your account" does not exist on this path — the debug build does not consult cloud visibility. Equally, no launch review and no shipping hardware to Xiaomi for evaluation.
+
+In other words: **gate ① (app discovery) and half of gate ② (pre-binding visibility) are bypassed here.**
+
+### 10.3 What this path still does not solve
+
+**The Mesh certificate chain.** Flashing your own board means no certificate chain, so it cannot be a Mesh device; it has to be **standard BLE (MiBeacon) direct** — which is the shape we already chose. The constraint matches the route, so there is no conflict.
+
+### 10.4 Whether the enterprise route is worth trying depends on one question
+
+A business licence is a hard requirement, no way around it. But note one detail:
+
+- "enterprises registered in mainland China (**excluding individual businesses**)" appears in the *service-provider admission rules*;
+- **the enterprise-developer registration docs contain no such exclusion.**
+
+So whether an individual business (个体工商户) can register an enterprise group is not explicitly closed. That is a zero-cost question to ask — and in Hangzhou an individual business licence is essentially free and takes 1–3 days online.
+
+### 10.5 Three things to do right now
+
+1. **Check the entry point's live state**: log into iot.mi.com → console → "register as developer" → see whether "apply for personal-developer internal testing" is clickable. The "quota full" note in the docs may be stale; the live state of the button is what counts.
+2. **Open a ticket with two questions** (tag "other" → service enquiry):
+   - when personal-developer internal testing reopens, and whether there is a waiting list;
+   - **whether an individual-business licence can register an enterprise developer group**.
+3. If the answer to #2 is yes, getting the licence is the fastest deterministic path; if no, the only options are waiting for a quota or the university programme.
+
+Steps 1 and 2 cost minutes. Do them before spending money on a licence.
