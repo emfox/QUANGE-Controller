@@ -98,13 +98,20 @@ Full field descriptions, reply parsing and the init sequence:
 │   ├── set_timer.py                  CLI schedule setter (recommended)
 │   ├── blectx.py                     Shared BLE helpers
 │   ├── probe.py                      Read-only diagnostics (scan / listen)
+│   ├── ota_dump.py                    OTA ROM dump (⚠️ irreversible, see docs/ota-dump.en.md)
 │   └── wxapkg_unpack.py              wxapkg unpacker (incl. the V1MMWX format)
+├── firmware/
+│   ├── rom_512k.bin                   Full flash backup (512 KB)
+│   ├── rom_vendor_firmware.bin        Vendor firmware slice (0x00000–0x0E000)
+│   └── README.md                      Checksums, layout and rights
 ├── miniprogram/
 │   ├── QUANGE-WY020702__APP__.wxapkg Original bundle (archived)
 │   └── app-service.js                Extracted application logic
 └── docs/
     ├── protocol.zh-CN.md             协议全文（Chinese）
     ├── protocol.en.md                Protocol (English)
+    ├── ota-dump.zh-CN.md              ROM dump procedure（Chinese, ⚠️ irreversible）
+    ├── ota-dump.en.md                 ROM dump procedure (English)
     ├── miniprogram.zh-CN.md          小程序结构与取包方法（Chinese）
     ├── miniprogram.en.md             Mini program internals (English)
     └── live-test-2026-10-29.md       Full real-hardware test log (GATT tree, pitfalls)
@@ -213,8 +220,11 @@ In short: **the bundle must be decrypted; the protocol does not.**
   `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is
   documented in [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.1. On 2026-11-08 those
   frames were used to flash third-party firmware, dump the full ROM and switch back; a vendor
-  firmware backup now exists ([docs/protocol.en.md](docs/protocol.en.md) §8.6). Flashing is
-  still irreversible — **no firmware is shipped here and DIY attempts are not recommended**;
+  firmware backup now exists ([docs/protocol.en.md](docs/protocol.en.md) §8.6, files under
+  [`firmware/`](firmware/README.md)). The full reproduction procedure is in
+  **[docs/ota-dump.en.md](docs/ota-dump.en.md)** ([中文](docs/ota-dump.zh-CN.md)).
+  Flashing is still irreversible — **no third-party firmware is shipped here and DIY attempts
+  are not recommended**;
 - **The state reply depends on subscription order**: state, battery and next-run time all come
   from the reply to `DB 04 02`. Measured 2026-11-07: you must **subscribe to `1002` before
   sending**, otherwise the reply is dropped and not buffered — that was the cause of the older
@@ -237,12 +247,17 @@ The protocol was derived from a client bundle of a discontinued app, solely to k
 already-purchased hardware usable (interoperability). Files under `miniprogram/` are archived
 artifacts of the vendor's mini program; copyright remains with the original rights holder, and
 they are included for research and interoperability reference only — not for commercial
-redistribution.
+redistribution. The images under [`firmware/`](firmware/README.md) are a personal backup dumped
+from a privately owned device; copyright in the vendor firmware remains with the original rights
+holder and is **not covered by this project's MIT license** — research and interoperability
+reference only, no commercial redistribution or porting to other products. The image also
+contains device-unique data (MAC, RF calibration) and one debug-firmware write; it is not a
+pristine vendor image. Assess this yourself before sharing it publicly.
 
 Sending commands to your hardware is at your own risk.
 
 ## License
 
 This project's own code and documentation are [MIT](LICENSE) licensed, © 2026 Emfox Zhou.
-The archived vendor bundle under `miniprogram/` is **not covered** by this license — see the
-disclaimer above.
+The archived vendor bundle under `miniprogram/` and the firmware images under `firmware/` are
+**not covered** by this license — see the disclaimer above and [`firmware/README.md`](firmware/README.md).

@@ -92,13 +92,20 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 │   ├── set_timer.py                   命令行改定时（推荐）
 │   ├── blectx.py                      BLE 公共模块
 │   ├── probe.py                       只读诊断（扫描 / 监听通知）
+│   ├── ota_dump.py                    OTA 导出 ROM（⚠️ 不可逆，见 docs/ota-dump.zh-CN.md）
 │   └── wxapkg_unpack.py               wxapkg 解包器（含 V1MMWX 新格式）
+├── firmware/
+│   ├── rom_512k.bin                   整机 flash 备份（512 KB）
+│   ├── rom_vendor_firmware.bin        原厂固件切片（0x00000–0x0E000）
+│   └── README.md                      校验值、布局与权利说明
 ├── miniprogram/
 │   ├── QUANGE-WY020702__APP__.wxapkg  小程序原件（存档）
 │   └── app-service.js                 解包出的业务逻辑
 └── docs/
     ├── protocol.zh-CN.md              协议全文（中文）
     ├── protocol.en.md                 Protocol (English)
+    ├── ota-dump.zh-CN.md              ROM 导出复现步骤（中文，⚠️ 不可逆）
+    ├── ota-dump.en.md                 ROM dump procedure (English)
     ├── miniprogram.zh-CN.md           小程序结构与取包方法（中文）
     ├── miniprogram.en.md              Mini program internals (English)
     └── live-test-2026-10-29.md        真机测试全过程记录（含 GATT 树、踩坑）
@@ -188,8 +195,10 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
   但检查更新和下载固件都要走 `api.sh-lifefun.cn`，该域名 DNS 还在、80/443 全部超时。
   协议机制已整理在 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.1；
   2026-11-08 已按该机制成功刷入第三方固件、导出整片 ROM 并切回原厂固件，
-  原厂固件备份也已取得（见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §8.6）。
-  但刷写仍是不可逆操作，**本项目不提供固件文件、也不建议自行尝试**；
+  原厂固件备份也已取得（见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §8.6，
+  备份文件在 [`firmware/`](firmware/README.md)）。完整的导出与复现步骤见
+  **[docs/ota-dump.zh-CN.md](docs/ota-dump.zh-CN.md)**（[English](docs/ota-dump.en.md)）。
+  但刷写仍是不可逆操作，**本项目不提供第三方固件文件、也不建议自行尝试**；
 - `DB 01 A0`（设备复位）**本项目不实现** —— 它在原厂是解绑时发的，可能清掉定时表，
   没有任何非破坏性用途；
 - **状态回包依赖订阅顺序**：状态、电量、下次杀菌时间都来自 `DB 04 02` 的回包。2026-11-07 实测：
@@ -208,10 +217,14 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 
 协议信息来自对已下线小程序客户端包的分析，目的仅为**让已停止维护的自有硬件继续可用**（互操作性目的）。
 `miniprogram/` 目录下的文件为原厂小程序产物的存档，版权归原权利人所有，仅供研究与互操作性参考，不得用于商业分发。
+[`firmware/`](firmware/README.md) 下的镜像是从自有设备导出的个人备份；其中原厂固件版权归原权利人所有，
+**不在本项目的 MIT 许可范围内**，仅供研究与互操作性参考，不得用于商业分发或移植到其它产品。
+镜像含设备唯一信息（MAC、射频校准）及一次调试固件写入，并非纯净原厂包，公开使用前请自行评估。
 
 使用本项目的指令直接操作硬件，风险自负。
 
 ## 许可证
 
 本项目自有的代码与文档采用 [MIT](LICENSE) 许可，版权 © 2026 Emfox Zhou。
-`miniprogram/` 下的原厂小程序存档**不在本许可范围内**，见上方免责声明。
+`miniprogram/` 下的原厂小程序存档与 `firmware/` 下的固件镜像**均不在本许可范围内**，
+见上方免责声明与 [`firmware/README.md`](firmware/README.md)。
