@@ -117,12 +117,23 @@ Full field descriptions, reply parsing and the init sequence:
 | Item | Value |
 | --- | --- |
 | Model | WY020702 |
-| Advertising name | `QUANGE-WY020702` **and** `kHID` (both appear alternately; match by MAC for reliability) |
+| Brand / responsible entity | **Shanghai Laifeng Household Products Co., Ltd.** ("QUANGE" is its own brand; USCC `91310120MA1HQ17M3W`, `sh-lifefun.com`) |
+| Advertising name | `QUANGE-WY020702`; `kHID` appears only in the **first packet** of each scan, then stays fixed (measured, §8.5 — not an alternating name) |
 | GAP device name | `Hi-YM01-XXXXXXXXXXXX` |
 | SoC | Telink. **Exact part number unknown** — PnP ID `0x8266` is an SDK default constant and identifies nothing |
-| Power | 3 × AA cells, BLE only, no Wi-Fi |
+| Power | Stock: 3 × AA cells. **The test unit has been converted to USB power** (no auto power-off, no clock loss) |
+| Manufactured in | Zhongshan, Guangdong |
 | UVC | Seoul Viosys 275 nm |
 | Original app | WeChat mini program *莱枫智能生活* (appid `wx9528fce803d3ba0e`, offline) |
+
+> **Entity check (2026-11-08)**: the WY020702 box/manual names Shanghai Laifeng, matching its
+> business registration, its domain and a related-party disclosure by listed company Chahua.
+> **"莱枫智能生活" is the mini program's name, not a company.** The "Hangzhou Laifeng
+> Intelligent" entity mentioned in earlier notes **does not exist**: the Hangzhou companies with
+> similar names are unrelated (Hangzhou Laifeng E-Commerce Co. was dissolved on 2022-07-28).
+> Brand owner ≠ module/firmware/OEM still holds (Telink module, OUI `1C:45:C2` = Huizhou Sanxin,
+> OEM in Zhongshan), but that does not imply a "Hangzhou" solution vendor.
+> Sources: [box/manual photos](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32), [business registry](https://aiqicha.baidu.com/company_detail_10059015340660), [Chahua disclosure](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF).
 
 ---
 
@@ -154,8 +165,10 @@ In short: **the bundle must be decrypted; the protocol does not.**
 
 - **The advertising name isn't always `QUANGE-WY020702`**: `kHID` is the Bluetooth module's
   factory-default name — the upstream vendor reused an HID product line's firmware config and
-  never changed the advertising setup. Measured: the name **does** switch between the two
-  (once within 40 s, then it stayed); the trigger is unknown. Functionality is unaffected — the
+  never changed the advertising setup. **Settled by measurement on 2026-11-08 (§8.5)**:
+  `kHID` appears only in the **first packet** of each scan (1/121, 1/98) and the name then
+  stays `QUANGE-WY020702` — **not an alternating name**; the older "switched once in 40 s,
+  trigger unknown" observation has been overturned. Functionality is unaffected — the
   business service `0xFB` works normally once connected, and the `0x1812` in the advertisement
   is **only a declaration; the device has no HID service**. The vendor app only accepts
   `QUANGE-WY020702`, so it actually can't see the device in
@@ -175,8 +188,9 @@ In short: **the bundle must be decrypted; the protocol does not.**
   mini program UI rules** (two entries 30 minutes apart were stored verbatim). The web app and
   script still enforce them **on purpose**, to match the vendor app and prevent configurations
   the original app could never produce; bypass with `set_timer.py --force`;
-- Whether the schedule survives a battery swap is untested (it should — it appears to live in
-  flash);
+- **Power-loss / battery-swap scenarios no longer apply**: the test unit has been converted to
+  USB power, so it neither powers off nor loses its clock. Items such as "does the schedule
+  survive a battery swap" have been closed in protocol §9 and are no longer tracked;
 - **Usage history is permanently lost**: the history never lives on the device — the mini program
   streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`, then reads it back through
   `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
@@ -207,13 +221,15 @@ In short: **the bundle must be decrypted; the protocol does not.**
   Re-tested: **state replies are normal during a sterilization run** (6/6), so the earlier
   single "no reply during the power-on run" observation does not hold — the device was
   probably not ready yet right after power-up (see protocol §8.5);
-- The device advertises very rarely. If connecting fails, move it closer and power-cycle it.
+- The device advertises very rarely. If connecting fails, move it closer; on a stock
+  battery-powered unit you can also power-cycle it (**not needed on the USB-powered test unit,
+  and a restart cannot bring back already-consumed log records**).
 
 ---
 
 ## Disclaimer
 
-Not affiliated with QUANGE, Shanghai Lifefun Commodity Co., Tencent or Huawei.
+Not affiliated with QUANGE, Shanghai Laifeng Household Products Co., Ltd., Tencent or Huawei.
 
 The protocol was derived from a client bundle of a discontinued app, solely to keep
 already-purchased hardware usable (interoperability). Files under `miniprogram/` are archived

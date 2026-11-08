@@ -46,6 +46,14 @@
 > package. **The chip cannot be identified at the BLE layer at all — only by reading the
 > silkscreen after disassembly.**
 
+> **Entity check (2026-11-08)**: "QUANGE" is the in-house brand of **Shanghai Laifeng
+> Household Products Co., Ltd.**, which is also the responsible entity printed on this unit's
+> box/manual (USCC `91310120MA1HQ17M3W`, `sh-lifefun.com`). **"莱枫智能生活" is the mini
+> program's name, not a company**; the "Hangzhou Laifeng Intelligent" entity in earlier notes
+> **does not exist**. Brand owner ≠ module/firmware/OEM still holds (Telink module,
+> OUI `1C:45:C2` = Huizhou Sanxin, OEM in Zhongshan), but it does not imply a "Hangzhou"
+> solution vendor. Sources: see the [README](../README.en.md) *Device facts* section.
+>
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
 > product's brand name. The cause is that the upstream vendor (**Shanghai Laifeng Household
 > Products Co., Ltd.**, `sh-lifefun.com`; "QUANGE" is its own brand) reused the firmware
