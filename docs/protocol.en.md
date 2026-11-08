@@ -852,9 +852,32 @@ and the device was restored to the vendor firmware and verified.**
 
 ---
 
+### 8.7 2026-11-08 14:05 (disassembly cross-check + `A0` confirmed destructive)
+
+With the full dispatch table recovered (§3.6), every read-only command was re-checked:
+
+| Sent | Reply | Conclusion |
+| --- | --- | --- |
+| `DB 00 07` | `BD0D07 020003 0F0005 FFFFFF FFFFFF 00` | table read = 4 slots x 3 B, same shape as the `08` reply |
+| `DB 00 09` | `BD1009 "LFWY020702/" 27BC5DB2 00` | the 16-byte serial block at flash `0x43000` |
+| `DB 00 03` | `BD0203 64 19` | battery 100%, `19` is a firmware constant |
+
+`A0` was pinned down with a controlled before/after inside a single connection:
+
+```
+DB 01 07  ->  BD 0D 07  02 00 03  0F 00 05  FF FF FF  FF FF FF   02:00/3min, 15:00/5min
+DB 01 A0  ->  BD 01 A0 00
+DB 01 07  ->  BD 0D 07  08 00 03  14 00 03  FF FF FF  FF FF FF   08:00/3min, 20:00/3min
+```
+
+A follow-up check: `DB 01 05` returned `BD0805 FFFFFFFF FFFFFF 00` (**the log table had been
+erased** — it held 190 historical records moments earlier), and the next-run field in the state
+frame moved to 20:00. ⟹ **`A0` is a factory reset: destructive and irreversible.** The original
+02:00/15:00 schedule was written back with `DB 08 08`.
+
 ## 9. Unverified
 
-> Items confirmed on real hardware are in §8.2 – §8.6. Only **genuinely open** questions that
+> Items confirmed on real hardware are in §8.2 – §8.7. Only **genuinely open** questions that
 > are worth further effort remain below.
 
 - **Exact Telink silkscreen part number** — the case is still unopened, so the precise

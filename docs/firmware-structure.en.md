@@ -87,7 +87,7 @@ hardware (see [protocol §3.6](protocol.en.md)).
 | `07` | `0x50F6` | read the 4-slot schedule table (3 B/slot) |
 | `08` | `0x51A4` | write the table (parsed at `0x604C` first) |
 | `09` | `0x5242` | read the serial block at `0x43000` |
-| `A0` | `0x5382` | housekeeping (`0x5C18`) + load default table (`0x5F90`) + branch |
+| `A0` | `0x5382` | **factory reset**: `0x5C18` erases the log/config/index sectors + `0x5F90` resets the RAM state |
 | `A2` | `0x52F2` | MAC read/write (write only while the stored MAC is `FFx6`) |
 | `A3` | `0x53DC` | serial number, written when the block is blank |
 | `A4` | `0x564E` | version, literal `"000014"` |
@@ -96,7 +96,8 @@ hardware (see [protocol §3.6](protocol.en.md)).
 
 `EC` is not a command: it is the sector number in `0xEC << 11 = 0x76000` (calibration/MAC), and
 `86` (`0x43000` serial), `88` (`0x44000` marker), `80`/`82`/`84`/`8A`/`8C` work the same way.
-`3C` is still unexplained.
+`3C` is not one either: it is the **second argument, 60**, passed to `0x1DC` at `0x514E`, converting
+a slot's duration in seconds into the minutes shown in the reply's third byte.
 
 ### 3.2 Flash data layout (recovered from the address-building sites, checked against the image)
 
@@ -162,10 +163,11 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 - Semantics of the 64 x `0x06C0` vector slots; header field `0x0C`; vendor checksum algorithm.
 - Purpose of the `0xD2A8` constant block and the `0x3000` near-zero region.
 - What each of the 34 indirect entries does; whether `0x2EA0` is the main loop.
-- What `A0` really does: `0x5382` calls `0x5C18` (clears a few sectors once uptime > 300 s) and
-  `0x5F90` (overwrites the RAM schedule table with defaults), then branches on `0x84358C[1]`.
-  **Not tested** — it may clobber device state.
-- The `3C` constant; who is served by the 3-entry software timer array at `0x842F34` (`0x41B4`).
+- What `0x1DC` actually is: it writes both arguments into `0x800664`/`0x800668` and polls `0x80065C`,
+  which looks like a hardware channel plus a wait — yet the result does equal `dividend / 60`
+  (slot duration in seconds to minutes). Not yet classified.
+- What the `0x6309` and `0x6539` events in the 3-entry software timer array at `0x842F34` (`0x41B4`)
+  stand for — `0x5F90` cancels them first and `0x41B4` re-arms them with a `0x0F4240` interval.
 - `0x800Fxx` / `0x80000C/D` register roles; which GPIO drives the UV/disinfection load.
 - No symbol table: functions can only be labelled by address and reference, not named automatically.
 
