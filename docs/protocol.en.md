@@ -31,10 +31,7 @@
 > ver           = 0x0001
 > ```
 >
-> ⚠️ **Earlier versions of this file listed the PID as `0x6682`, which swapped the two bytes
-> `66 82`. Corrected.**
->
-> But **even read correctly, `0x8266` does not identify the chip**. Source-level inspection shows
+> **`0x8266` does not identify the chip.** Source-level inspection shows
 > it is a hardcoded array in the Telink BLE SDK reference design — every Telink device using the
 > default configuration reports exactly the same bytes:
 >
@@ -47,13 +44,11 @@
 > silkscreen after disassembly.** A successful third-party OTA on 2026-11-08 (§8.6) narrowed
 > this to **binary compatibility with TLSR8258** — a functional inference, not a silkscreen.
 
-> **Entity check (2026-11-08)**: "QUANGE" is the in-house brand of **Shanghai Laifeng
-> Household Products Co., Ltd.**, which is also the responsible entity printed on this unit's
-> box/manual (USCC `91310120MA1HQ17M3W`, `sh-lifefun.com`). **"莱枫智能生活" is the mini
-> program's name, not a company**; the "Hangzhou Laifeng Intelligent" entity in earlier notes
-> **does not exist**. Brand owner ≠ module/firmware/OEM still holds (Telink module,
-> OUI `1C:45:C2` = Huizhou Sanxin, OEM in Zhongshan), but it does not imply a "Hangzhou"
-> solution vendor. Sources: see the [README](../README.en.md) *Device facts* section.
+> **Entity**: "QUANGE" is the in-house brand of **Shanghai Laifeng Household Products Co., Ltd.**,
+> which is also the responsible entity printed on this unit's box/manual (USCC
+> `91310120MA1HQ17M3W`, `sh-lifefun.com`). **"莱枫智能生活" is the mini program's name, not a
+> company.** Brand owner ≠ module/firmware/OEM (Telink module, OUI `1C:45:C2` = Huizhou Sanxin,
+> OEM in Zhongshan). Sources: see the [README](../README.en.md) *Device facts* section.
 >
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
 > product's brand name. The cause is that the upstream vendor (**Shanghai Laifeng Household
@@ -188,9 +183,7 @@ The timestamp calibrates the device clock, and it is the prerequisite for the la
 > seconds; no conversion needed.
 >
 > **State replies are normal during a run** (6/6 samples): `BD0E02 01 ...` kept arriving,
-> with `12..16` climbing from `001E` (30 s) to `00A0` (160 s) and resetting to zero at the
-> end. The earlier single "no reply during the power-on run" observation does not hold;
-> the device was probably not ready yet right after power-up.
+> with `12..16` climbing from `001E` (30 s) to `00A0` (160 s) and resetting to zero at the end.
 
 ### 3.3 Set schedule
 
@@ -282,7 +275,7 @@ Measured on real hardware, one frame at a time:
 
 | Sent | Reply | Reading |
 | --- | --- | --- |
-| `DB 01 A0` | `BD 01 A0 00` | 1 status byte; **no reset observed**, later commands still worked |
+| `DB 01 A0` | `BD 01 A0 00` | 1 status byte; **destructive — factory reset**, see §3.6 |
 | `DB 01 A2` | `BD 07 A2 1C45C2009BB6 00` | MAC + `00`, stable across reads |
 | `DB 01 A3` | `BD 11 A3 4C4657593032303730322F 27BC5DB2 0002` | `"LFWY020702/"` + 6 bytes, tail meaning unknown |
 | `DB 01 A4` | `BD 06 A2 303030303134` | ASCII `"000014"`, firmware version (**reply type is `A2`, not `A4`**) |
@@ -294,15 +287,13 @@ Measured on real hardware, one frame at a time:
 Three measured constraints:
 
 - **The first frame after each connection is always dropped**; send one warm-up frame first. All rows above came after it.
-  This also explains the old conclusion "`DB 04 02` never replies on this firmware" — on 2026-11-08 two
-  `DB 04 02` frames were sent back to back and the second immediately returned
-  `BD 0E 02 00 00B4 0000 64 …`; the device is perfectly healthy.
+  When two `DB 04 02` frames are sent back to back, the second immediately returns
+  `BD 0E 02 00 00B4 0000 64 …`.
 - Replies stay `BD <LEN> <TYPE> <DATA>`; the `LEN` formula differs per command (see §3.6), so it is not a payload length.
 - The device disconnects itself after 3–4 consecutive frames per connection; test in batches.
 
-> `DB 01 A0` was previously labelled "device reset", but **with no argument it only returns
-> `BD 01 A0 00` and the device does not reset** — the old label has no basis. Whether
-> `DB 01 A0 xx` resets was not tested (it would trigger the power-on auto cycle and disturb the rest).
+> `DB 01 A0` replies `BD 01 A0 00` and then **resets the device to factory defaults** — it is
+> destructive and irreversible, see §3.6. The reply gives no warning; it is a reply, not a refusal.
 
 ### 3.6 Full command map (from the firmware disassembly, 2026-11-08)
 
@@ -338,8 +329,14 @@ verbatim, `[3..]` payload. So **the second reply byte is a length and the third 
 | `A5` | `0x566A` | Read-only MAC (reads `0x76000[0..5]` and reverses it) | `BD 07 A5` + 6 bytes + `00` |
 | `A6` | `0x5182` | **Erases sector `0x44000` and writes a single `01` byte** | none (default buffer) |
 
-Three commands carry **write side effects** — documented, but do not fire them casually:
+Four commands carry **write side effects** — documented, but do not fire them casually:
 
+- `A0` is **factory reset**, the most destructive of them: `0x5382` first calls `0x5C18` to erase
+  `0x40000` (log table), `0x41000` (config) and `0x45000` (queue index), then `0x5F90` resets the
+  whole RAM state struct to defaults (schedule becomes **08:00 and 20:00, 3 min each**), and finally
+  reloads the soft timers. Measured before/after on 2026-11-08: `BD0D07` went from
+  `02 00 03 / 0F 00 05` to `08 00 03 / 14 00 03`, the log read turned into `FFFFFF…` (190 records
+  gone with the table), and next-run jumped to 20:00.
 - `A2` overwrites the calibration block with the 6 payload bytes when the MAC at `0x76000` equals
   `FF FF FF FF FF FF` (constant at `0xCDB4`). A provisioned unit never matches, but that check is
   the only guard — one misread bit and you have rewritten the MAC.
@@ -509,10 +506,10 @@ send DB 01 05
   → …
   → BD0806 FFFFFFFF FFFFFF 00 marks the end of the buffer
 
-(Measured 2026-11-07: one full drain yielded 45 records — the first `BD0805`, the other
-44 `BD0806` — ending with `BD0806 FFFFFFFF FFFFFF 00`. Older notes saying "every record
-is BD0805" were wrong.)
 ```
+
+A full drain yielded 45 records: the first `BD0805`, the other 44 `BD0806`, ending with
+`BD0806 FFFFFFFF FFFFFF 00`.
 
 The original mini program stores both `00` (start) records and `01` (end) records, the latter
 only when duration is non-zero, and uploads the batch to its backend once `FFFFFFFF` arrives.
@@ -570,29 +567,24 @@ Corroborating: `DB 01 05` served `0x00084B70`; without acking, a second `DB 01 0
    Also, a run started with `DB 02 04 01` produced **no new log record** (one A/B
    comparison) — only scheduled runs write logs (§8.5).
 
-> **The earlier "a power cut really loses records" inference is withdrawn** (reviewed
-> 2026-11-08). What was seen on 11-07 — class-B timestamps and `2026-04-03` gone, the chain
-> starting at `04-02` — was read as "the most recent records were never flushed". Laying the
-> three dumps out in time shows those records had **already been acknowledged and consumed in
-> earlier runs**: s1 `11-01 → 05-08`, s4 `05-08 → 04-03`, s6 `04-02 → 02-18`, contiguous
-> with zero overlap. "Already consumed" needs no extra assumption about power loss.
-> **Whether a power cut loses anything on top of that is unproven.**
+> **Whether a power cut loses anything on top of consumption is unproven.** Laying the three
+> dumps out in time gives contiguous runs with zero overlap — s1 `11-01 → 05-08`,
+> s4 `05-08 → 04-03`, s6 `04-02 → 02-18` — and those records were acknowledged and consumed in
+> earlier runs, so "already consumed" explains the chain without assuming any loss.
 
 Observed behaviour:
 
 - **Newest first within the queue**;
-- **45 is not a buffer capacity**: the three reads yielded 37 / 42 / 45 records — those
-  are just the **unread queue lengths** at the time. Real capacity is unknown; §8.3's
-  "depth ≥ 42" and §8.4's "= 45" both mistook queue length for capacity;
-- 44 of 45 had `20..22` = `01` (end), **the oldest was `00`** — so "always `01`" is wrong and
-  start-type records do exist, just rarely. All 45 here were 180 s (300 s was measured in §8.2);
+- **45 is not a buffer capacity**: the three reads yielded 37 / 42 / 45 records — those are just
+  the **unread queue lengths** at the time. Real capacity is unknown;
+- 44 of 45 had `20..22` = `01` (end), **the oldest was `00`** — start-type records do exist,
+  just rarely. All 45 here were 180 s (300 s was measured in §8.2);
 - Timestamps come in two families. **A**: real unix seconds (44 records here,
   `2026-02-18` … `2026-04-02`, 02:00 every day, exactly 24 h apart). **B**: small values
   (`00000000`, `0003D4C2`, `00030570`, …) that are **exact multiples of 3600** and alternate
   **13 h / 11 h** apart, matching the `02:00` and `15:00` schedules.
 - Class B stops appearing in later reads while class A follows on, consistent with
-  **consumption in time order**; the earlier "class B is RAM-only and lost on power cut"
-  was an **inference, now withdrawn**. Why class B values are exact multiples of 3600 is
+  **consumption in time order**. Why class B values are exact multiples of 3600 is
   still unknown (on USB power they cannot recur, see §9). Both families **must be
   acknowledged**, otherwise the records behind them are unreachable.
 
@@ -755,7 +747,7 @@ was restored and read back after all write cases** (last row).
 | Full log drain | `DB 01 05` → `DB 06 06 01` ×45 | 45 records + `BD0806 FFFFFFFF FFFFFF 00` | **unread queue = 45** (not capacity, see §5.3); first frame `BD0805`, the rest `BD0806` |
 | Queue emptied | `DB 01 05` again after the end marker | `BD0805 FFFFFFFF FFFFFF 00` | consumed records **do not return** |
 | Idle listen | — (10 s; another 60 s run) | 0 frames | no unsolicited pushes **while idle** (not tested during a run — deliberately dropped, see §9) |
-| **Delete frame** | `DB 00 08 01 020003` | `BD0D08 020003 FF×6 00` | delete frame works (previously only inferred) |
+| **Delete frame** | `DB 00 08 01 020003` | `BD0D08 020003 FF×6 00` | delete frame works |
 | Delete, clear all | `DB 00 08 00` | 0 frames here; all-`FF` empty table in the next window | cleared, reply delayed |
 | **Duration bounds** | duration byte `00` / `0F` / `07` | replies `020000` / `02000F` / `020007` | **firmware does not validate duration**; 3–6 min is front-end only |
 | Spacing recheck | 30 min / 59 min pairs | both stored verbatim | consistent with §8.2 |
@@ -773,12 +765,11 @@ was restored and read back after all write cases** (last row).
 > "it starts sterilizing right after power-on". The clock had not been synced since reboot,
 > hence `ts=0`. **A single observation.**
 
-> **Log chain across the power cut (reinterpreted 2026-11-08).** Before it (§8.3) the
-> chain held class-B "multiples of 3600" timestamps and `2026-04-03`; afterwards the 44
-> historical records were all class-A real unix seconds (`2026-02-18` … `2026-04-02`).
-> This was recorded as "power cut loses records"; under the consumption queue model (§5.3)
-> **those had already been acknowledged in earlier runs**, so the chain simply continued
-> at `04-02`. Whether a power cut loses anything extra is unproven.
+> **Log chain across the power cut.** Before it (§8.3) the chain held class-B "multiples of
+> 3600" timestamps and `2026-04-03`; afterwards the 44 historical records were all class-A real
+> unix seconds (`2026-02-18` … `2026-04-02`). Under the consumption queue model (§5.3) those had
+> already been acknowledged in earlier runs, so the chain simply continued at `04-02`. Whether a
+> power cut loses anything extra is unproven.
 
 ### 8.5 2026-11-08 (USB powered, RSSI −70 to −74 dBm, stable link)
 
@@ -808,12 +799,11 @@ was restored and read back after all write cases** (last row).
 > The 02:00 run is confirmed by the state reply
 > `BD0E02 00 00B4 0000 64 6AF01DF0 6AEFAFB5` (`next run` = 11-08 15:00, device clock
 > 07:09:41, battery 100%, idle).
-> ⚠️ The old "read cursor + 45-record ring buffer" model is disproven: three dumps are
-> contiguous with zero overlap (even across a power cycle), six historical timestamp
-> seeks all failed, and 45 was just that run's unread queue length. Whether records are
-> physically deleted or merely marked read is undecidable here. Also, a `DB 02 04 01`
-> run writes no log — that caused an earlier misreading. Schedule reads/writes were
-> unaffected throughout; the real unix clock was in place and the schedule remained
+> "Read cursor + 45-record ring buffer" does not hold: three dumps are contiguous with zero
+> overlap (even across a power cycle), six historical timestamp seeks all failed, and 45 was just
+> that run's unread queue length. Whether records are physically deleted or merely marked read is
+> undecidable here. Also, a `DB 02 04 01` run writes no log. Schedule reads/writes were unaffected
+> throughout; the real unix clock was in place and the schedule remained
 > `02:00/3min + 15:00/5min`.
 
 ### 8.6 2026-11-08 11:00–11:35: ROM dump succeeded (USB power, −68 to −74 dBm)
@@ -832,12 +822,10 @@ and the device was restored to the vendor firmware and verified.**
 | Restore | `D7` Change Start Boot | back to `QUANGE-WY020702` at the original MAC | switch worked |
 | Verify | full init sequence | `BD0D07 020003 0F0005 FF×6 ED`; `BD1102 …` battery 100% / `next run` 15:00; log head normal | fully functional, schedule unchanged |
 
-> **Two earlier judgements corrected**: (1) "TelinkMiFlasher shares the frame format and
-> would very likely write" was wrong — block size, handshake and end frame all differ;
-> success required a byte-for-byte reproduction of `app-service.js`. (2) "flashing may
-> brick it permanently and the vendor ROM cannot come back" is disproven — with dual
-> slots the vendor firmware stays at `0x00000` and `D7` switches back.
-> ⚠️ **That does not make the earlier caution wrong**: neither was knowable beforehand.
+> Two things to note: (1) **TelinkMiFlasher does not share this frame format** (block size,
+> handshake and end frame all differ); writing succeeded only by reproducing `app-service.js`
+> byte for byte. (2) With dual slots the vendor firmware stays at `0x00000` and `D7` switches
+> back, so flashing is reversible.
 > Also, the BLE-Hacker firmware's `2A26` string `TLSR825x` is its own hard-coded value,
 > **not** evidence of the part number. "8258-compatible" is only a **functional inference**
 > (a binary built for 8258 with `-llt_8258` booted fully and operated the flash); the exact
@@ -871,7 +859,7 @@ DB 01 07  ->  BD 0D 07  08 00 03  14 00 03  FF FF FF  FF FF FF   08:00/3min, 20:
 ```
 
 A follow-up check: `DB 01 05` returned `BD0805 FFFFFFFF FFFFFF 00` (**the log table had been
-erased** — it held 190 historical records moments earlier), and the next-run field in the state
+erased** — it held 190 records moments earlier), and the next-run field in the state
 frame moved to 20:00. ⟹ **`A0` is a factory reset: destructive and irreversible.** The original
 02:00/15:00 schedule was written back with `DB 08 08`.
 
@@ -900,7 +888,6 @@ manual stop was **not tested on its own** — noted, not concluded.
   for TLSR8258 with `-llt_8258`, **booted fully and operated the flash** on this unit
   (§8.6), so it is binary-compatible with 8258. PnP ID `0x8266` remains an SDK default and
   the BLE layer has nothing further; the exact silkscreen needs disassembly. **Not pursued.**
-  The earlier worry that the dumper would be blocked by an unknown part is resolved.
 - **Do later scheduled points keep the log readable?** — confirmed once (11-08 02:00,
   see §8.5); USB power needs no long-press restart. What is still missing is a **second
   and a multi-day** repetition. The next natural scheduled point is 11-08 15:00 — just
@@ -910,16 +897,16 @@ manual stop was **not tested on its own** — noted, not concluded.
   indistinguishable at the BLE layer, and the capacity is unknown (37 / 42 / 45 were
   only the unread lengths). Not worth pursuing without reading the Flash directly.
 
-**Deliberately closed, no longer tracked** (with reasons, to avoid repeating the work):
+**Closed, not tracked further** (with reasons, to avoid repeating the work):
 
 | Item | Why closed |
 | --- | --- |
-| How many logs a power cut loses / does it affect the queue / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios no longer occur. The old "power cut loses records" inference is withdrawn (§5.3) |
+| How many logs a power cut loses / does it affect the queue / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios do not occur (§5.3) |
 | Does the power-on auto run write a `type=1` log? | **Measured twice** (11-07 / 11-08 long-press reboots). A long-press reboot still happens on USB power, so this is not a "can no longer recur" item — see §8.5 |
 | Mapping class-B log time base (exact multiples of 3600) | Class B was a product of a **lost / unsynced clock**; on USB power the clock never drops, so it cannot recur. Why two time bases existed is still unknown, but has no practical impact |
-| Does the state reply vanish during the power-on run? | Disproven: 6/6 replies during a run (§8.5). The earlier single zero-reply case was likely a not-yet-ready device |
+| Does the state reply vanish during the power-on run? | Settled: 6/6 replies during a run (§8.5) |
 | Button / body-radar notifications | No control or configuration interface for either exists in the protocol; a positive result could not control anything |
 | Meaning of the trailing byte in `BD0D07` / `BD0D08` | Settled: clock-derived field, ignore it (§8.5) |
 | What triggers the advertising name switch | Settled: `kHID` appears only in the first packet of a scan, then stays fixed (§8.5) |
 | Does `0x1812` disappear with a renamed device? | Renaming is cloud-only with a dead backend; **no device-side write path**, so it cannot be measured |
-| Delete frame / duration byte / `20..22` / queue consumption | All measured, see §8.4 / §8.5. "Ring depth 45" and "cursor wrap" were the old model and are disproven |
+| Delete frame / duration byte / `20..22` / queue consumption | All measured, see §8.4 / §8.5 |

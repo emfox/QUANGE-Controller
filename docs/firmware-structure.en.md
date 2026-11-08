@@ -134,14 +134,14 @@ which is why all 200 slots still hold their history after 45 acknowledgements. E
 the whole 1600 B block (read-modify-write of the entire sector), so flash wear is one sector erase
 per logged record.
 
-## 4. Two switch jump tables
+## 4. Three switch jump tables
 
 Both are `switch` jump tables, **not callback registries** (corrected 2026-11-08, see the code map §6).
 
 - **`0xD104`**: 83 slots, 13 real cases, **70 slots point at `0x7AF2`** — and `0x7AF2` is literally
   `r6 = 0; return r6`, i.e. `default: return 0`. The 13 case values match the ATT opcode numbering
   one by one, so this is the ATT request dispatcher (`0x7A98`), reached from `0x8D04`.
-- **`0xD31C`**: previously read as one 30-slot table; it is **two 15-slot tables back to back**.
+- **`0xD31C` / `0xD358`**: **two 15-slot tables back to back** (`0xD31C` event codes, `0xD358` LL control PDUs).
   The instruction before `0xB8A6` is `tcmp r0, #14` + `tjls`, so the index can only be 0..14 and
   covers just `0xD31C–0xD357`. `0xD358` has its own literal (`0xC034`) and is a second 15-slot table.
   Both fall back to `0xBCA6`. The dispatcher `0xB8A6` belongs to `0xB874` (the LL/RF event
@@ -175,7 +175,7 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
    51 distinct byte values, entropy 5.63 (the code page at `0xCC00` scores 5.93 —
    **entropy alone does not imply cryptographic material**). It sits between config constants and the
    pointer tables, possibly BLE security/random-related. **Purpose unverified — do not treat as a key or backdoor.**
-2. Two switch jump tables (§4; previously recorded as "function pointer tables with 34 indirect entries").
+2. Three switch jump tables (§4).
 3. The 4 KiB `0x3000–0x3FFF` region has **no code references at all** (0 calls, 0 literals) —
    more likely a reserved/calibration sector than a "low-entropy data table".
 4. Exact addresses of command dispatch and reply builders (§3); **the whole command table and the
@@ -193,20 +193,20 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 
 ## 7. Still unknown
 
-- Semantics of the 64 x `0x06C0` vector slots; header field `0x0C`; vendor checksum algorithm.
+- Header field `0x0C`; vendor checksum algorithm.
 - Purpose of the `0xD2A8` constant block and the `0x3000` near-zero region.
-- Where the `0xD31C` table (30 slots) is entered from and what each case means; whether `0x2EA0` is the main loop.
-- What `0x1DC` actually is: it writes both arguments into `0x800664`/`0x800668` and polls `0x80065C`,
-  which looks like a hardware channel plus a wait — yet the result does equal `dividend / 60`
-  (slot duration in seconds to minutes). Not yet classified.
-- What the `0x6309` and `0x6539` events in the 3-entry software timer array at `0x842F34` (`0x41B4`)
-  stand for — `0x5F90` cancels them first and `0x41B4` re-arms them with a `0x0F4240` interval.
-- `0x800Fxx` / `0x80000C/D` register roles; how many GPIO branches the disinfection load uses and what each drives (static analysis only shows group switching).
+- The role of `0x2EA0` (~2,224 instructions, contains a `0xBD` constant). The main loop is `0x48EC`
+  (see the [code map](firmware-code-map.en.md) §11), so it is not the main loop, but its body is
+  still unclassified.
+- `0x800Fxx` / `0x80000C/D` register roles; how many GPIO branches the disinfection load uses and
+  what each drives (static analysis only shows group switching).
 - No symbol table: functions can only be labelled by address and reference, not named automatically.
 
 ## 8. Suggested next steps
 
-1. **Hardware cross-check**: send frames for each §3 constant to see which of `A0…EC` are live commands.
-2. **A second ROM dump** diffed against `0x40000` to pin down the sync cursor (open item in static analysis §4).
-3. Extend `tc32_disasm.py` with control-flow traversal to map the state machine in `0x48EC` and the 30 `0xD31C` cases.
-4. Install Ghidra + the TC32 language module for decompilation (P-code) of the large functions and switches.
+1. **Decompilation**: install Ghidra plus the TC32 language module (P-code) to turn the large
+   functions and switches into approximate C. `tools/tc32_ram.py` currently stands in for that
+   layer with its access matrix.
+2. **Read memory on hardware**: the `+0x04` group of `0x843C0C` (`16/64/80` at `+0x05`, `0/3` at
+   `+0x0E`, `0x43` at `+0x21`) is not reachable over the protocol — an SWD debugger is the only
+   way in.

@@ -446,8 +446,6 @@ That is: take the **high nibble of hex byte 2** (`15..16`) and the **low nibble 
 >
 > **Correct approach**: `frame[3:].decode("ascii")` → `"000014"` → `14`.
 > `_decode()` in `tools/set_timer.py` already does this (see [protocol §8.2](protocol.en.md)).
-> The previous note here — "the reply is only 6 bytes, layout unverified" — was **wrong**: it
-> mistook 6 ASCII characters for 6 bytes.
 
 #### 5.1.3 OTA channel
 
@@ -665,15 +663,13 @@ the upstream vendor reused the firmware config of an HID product line and never 
 advertising setup. The vendor app's "rename device" feature only calls a cloud API and **never
 writes to the device**, so this name can only have been burned in at the factory.
 
-Measurement on 2026-11-01 added two facts, one of which overturns what this repo used to say:
+Two measured facts:
 
-- **The `0x1812` in the advertisement is the same leftover, not a capability.** A full GATT
-  dump shows no HID service — the device advertises a service it does not provide.
-- **The advertising name does change.** Within 40 s the same MAC switched from `kHID` to
-  `QUANGE-WY020702` and then stayed there, with every other advertising field unchanged.
-  **The trigger is unknown.**
-  (An earlier revision asserted, from `conble.js` alone, that "alternating names is a
-  misreading". That correction overshot — the original statement was right.)
+- **The `0x1812` in the advertisement is a leftover, not a capability.** A full GATT dump shows
+  no HID service — the device advertises a service it does not provide.
+- **`kHID` appears only in the first packet of each scan** (1/121, 1/98), after which the name
+  stays `QUANGE-WY020702`, with every other advertising field unchanged (protocol §8.5). The two
+  names do not alternate.
 
 So the advertising name and `0x1812` come from the same config block: **neither is a stable
 identifier**. Only the MAC is.

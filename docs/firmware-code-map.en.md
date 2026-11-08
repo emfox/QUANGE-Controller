@@ -29,7 +29,7 @@ The 512 KB image holds 57,316 bytes of real content (`0xD3E4`). Only two blocks 
 0x0CCD6 | end of code block B          |
 0x0CCE0 | adv name, GATT tables, string|
 0x0D104 | event callback table (83)    |
-0x0D31C | pointer table (30)           |
+0x0D31C | two switch tables (15 + 15)  |
 0x0D3E4 +------------------------------+
 ```
 
@@ -92,14 +92,14 @@ The "calls ->" column buckets `tjl` targets by their high bits (each bucket is `
 | `0x04000–0x04FFF` | 1,928 | **app control logic** (cycle state machine, soft timers) | heavy use of `0x842F34` (3-entry timer array); IO `0x80059B`, `0x800580`, `0x800780` |
 | `0x05000–0x058FF` | 1,111 | **command dispatch** (see protocol §3.6) | only code referencing the reply buffer `0x844ACC` |
 | `0x05900–0x065FF` | 1,584 | **storage**: log table, queue index, state persistence | references `0x40000/0x42000/0x45000/0x46000` |
-| `0x06600–0x071FF` | 1,455 | **peripheral driver** (GPIO-heavy) | **77** calls into the HAL bucket; GPIO `0x800581/0x80059B/0x800593` (`0x800540/0x800548` are the TRNG, §15.5) |
+| `0x06600–0x071FF` | 1,455 | **peripheral driver** (GPIO-heavy) | **77** calls into the HAL bucket; GPIO `0x800581/0x80059B/0x800593` (`0x800540/0x800548` are the TRNG, §15.8) |
 | `0x07200–0x077FF` | 713 | base library: `memcpy/memset/memcmp`, strings, wait loops | entries `0x719C`/`0x7200`/`0x7214` live here |
 | `0x07800–0x087FF` | 1,992 | **ATT request dispatch layer** (§6) | all 13 cases of the `0xD104` jump table land here, and so does the default |
 | `0x08800–0x09FFF` | 2,980 | BLE radio / baseband | IO `0x800F00/0x800F20/0x800C2A/0x800C2B` |
 | `0x0A000–0x0AFFF` | 1,984 | BLE stack above the link layer | IO `0x800F01/0x800F03`; RAM `0x8439xx/0x843Bxx` |
 | `0x0B000–0x0B7FF` | 993 | stack <-> app glue | 12 calls into the HAL bucket; RAM `0x843Cxx/0x843Dxx` |
 | `0x0B800–0x0BFFF` | 968 | **`0xB874` event dispatcher and all of its cases** (table A, §15.2) | `0x800740`x13 — nearly every function reads the tick |
-| `0x0C000–0x0CFFF` | 1,579 | random numbers / crypto / analog front end | IO `0x800540/0x800548` (**TRNG**, §15.5), `0x800550/0x800560` |
+| `0x0C000–0x0CFFF` | 1,579 | random numbers / crypto / analog front end | IO `0x800540/0x800548` (**TRNG**, §15.8), `0x800550/0x800560` |
 
 In the call graph, `0x8800–0x0CFFF` is a self-contained cluster (internal calls far outnumber external
 ones) — consistent with a linked-in BLE library. `0x7800–0x087FF` only calls into the library and is
@@ -157,10 +157,11 @@ The exact fields are tabulated in §8.
 
 ---
 
-## 6. Two jump tables (not callback registries)
+## 6. Three `switch` jump tables
 
-The previous version called `0xD104` / `0xD31C` "function pointer / callback tables". **That was wrong.**
-Both are `switch` jump tables.
+`0xD104`, `0xD31C` and `0xD358` are all **jump tables emitted for `switch` statements** — not
+function pointer tables and not callback registries. They differ only in index space: ATT opcodes,
+internal event codes and LL control PDUs.
 
 `0x7A98` is the dispatcher:
 
@@ -201,14 +202,13 @@ branches before calling into `0x7A98` via `0x8D96`.
 So this layer is an **ATT request dispatcher**, not an application callback layer.
 **Marked as a strong inference, unproven** (the numeric fit is excellent, but there is no symbol table).
 
-`0xD31C` is also a jump table, but **it is not one 30-entry table — it is two 15-entry tables
-back to back** (§15.2). The instruction before `0xB8A6` is `tcmp r0, #14` + `tjls`, so the index can
-only be 0..14 and only covers `0xD31C–0xD357`. `0xD358` is a **second** table, referenced by its own
-literal at `0xC034`, also indexed 0..14. Both use `0xBCA6` as the empty/default case.
+`0xD31C` and `0xD358` are **two 15-entry tables back to back** (§15.2 / §15.3), not one 30-entry table.
+The instruction before `0xB8A6` is `tcmp r0, #14` + `tjls`, so that index can only be 0..14 and only
+covers `0xD31C–0xD357`; `0xD358` is referenced by its own literal at `0xC034` and is also indexed
+0..14. Both use `0xBCA6` as the empty/default case.
 
-Also withdrawn: the earlier "34 indirect entries" claim. Most of that list were case labels of these
-two switch tables, not registered function pointers. Only ~30 thumb pointers are actually written to
-RAM by code; `--indirect` lists them.
+The addresses in these tables are case labels, not registered function pointers. Only ~30 Thumb
+pointers are actually written into RAM by code; `--indirect` lists them all.
 
 ---
 
@@ -395,10 +395,10 @@ Both call sites load the pointer into `r3` first:
 in the main loop while doing nothing itself — and it means the notification channel is swappable:
 replace `0x844BCC` and you replace the sink.
 
-### 12.2 `0x5064` — the command dispatcher (entry address corrected)
+### 12.2 `0x5064` — the command dispatcher
 
-Every earlier document said "the dispatcher at `0x506E`", but that is the **fifth instruction of the
-prologue**; the real entry is `0x5064` (the next `tpush` after the `0x5060` stub). Corrected globally.
+The dispatcher starts at `0x5064`, the next `tpush` after the `0x5060` stub. `0x506E` is only the
+fifth instruction of its prologue, not an entry point.
 
 Besides the switch already documented, the prologue copies two 20-byte constants:
 
@@ -411,7 +411,7 @@ Besides the switch already documented, the prologue copies two 20-byte constants
 `0xCD44` = 16 x `FF` + `90 5F 01 00`. These are compiler-generated const templates for stack
 aggregates; **no later reader was found**, so no conclusion is drawn here.
 
-Case 7, fully decoded (previously only "reads the 4-slot table"):
+Case 7, fully decoded:
 
 ```
 r4 = reply buffer + 3
@@ -481,9 +481,8 @@ The matching power-up sequence is `0x74EC(a)`:
 reg 0x3C &= ~1 ; reg 0x2D = 0x15 ; reg 0x05 = 0x02 ; reg 0x2C = a | 0x1F
 ```
 
-The other suspicious helper, `0x52C`, writes `0x800061 = 0x20` (bit 5 of the same register family),
-so the two belong to one "peripheral combination switch". The earlier guess that `0x52C` is a
-power/reset sequence was close.
+The other helper, `0x52C`, writes `0x800061 = 0x20` (bit 5 of the same register family), so the two
+are two bits of one "peripheral combination switch".
 
 ### 12.5 IRQ14 is an 80 ms timeout watchdog
 
@@ -515,23 +514,15 @@ decremented in a loop) and `0x843B20` are contexts of the same family.
 
 => This layer is **link-timing scheduling**, not application logic.
 
-### 12.7 A contradiction that has to be stated
+### 12.7 What `0x843C0C` is for
 
-The evidence around `0x843C0C` points **both ways**:
+`0xAD8C` (its initialiser) is called right after the RF init sequence; IRQ14 reads it, gated on
+"connected"; `0xADE8` takes `+0x34` and writes the timer compare register. At the same time the main
+loop's start/stop sequences write its `+0x04` (15/0), immediately followed by a register switch like
+`0x7484(64,0,1)`, and the application never reads `+0x04` back.
 
-- **For "link-layer context"**: `0xAD8C` (its initialiser) is called right after the RF init
-  sequence; IRQ14 is gated on "connected"; `0xADE8` writes the timer compare register; the values
-  `16/64/80` also appear on the RF side.
-- **For "application-side actuator state"**: the main loop's start/stop sequences write `+0x04`
-  (15/0) directly, immediately followed by a register switch like `0x7484(64,0,1)`; and the
-  application never reads `+0x04` back.
-
-Both readings are consistent, and static analysis has reached its limit at this layer.
-
-> **2026-11-08 addendum (§13.7 rewrites this conclusion)**: after reading all of `0xA000–0xB000`,
-> `0x843C0C` is neither a link-layer context nor actuator state — it is the **timer / low-power
-> scheduling block**, holding the timer deadline, the wakeup compare base, the last-activity tick and
-> several durations. Neither reading above survives; what `+0x04` means is still open.
+=> It is the **timer / low-power scheduling block shared by the application and the stack**; the
+field table is in §13.7.
 
 ---
 
@@ -549,10 +540,10 @@ whole layer, **neither is right**: it is the **timer / low-power scheduling bloc
 | `0xA0B4` | 1,540 | `0xA6CC` | **ATT PDU layer** — real entry is `0xA0B4`; `0xA0B8` is only the third instruction of its prologue (§15.1) |
 | `0xA6BC` | 60 | **none** | gate registered at `0x8439B8` = `0xA6BD` by `0x9A18` |
 | `0xA790` | 128 | `0xA882` / `0xAA82` | not read in detail |
-| `0xA810` | 524 | **none** | registered at `0x843A70` = `0xA811` by `0x9A18`; `0xA818` is its second prologue word (§15.3b) |
+| `0xA810` | 524 | **none** | registered at `0x843A70` = `0xA811` by `0x9A18`; `0xA818` is its second prologue word (§15.5) |
 | `0xAA20` | 344 | `0x2686` | **link-event timing** (1.25 ms-unit window maths on `0x843A80` / `0x843B20`) |
 | `0xAB78` | 64 | `0x293A` | not read in detail |
-| `0xABB8` | 368 | `0xAD3E` | **link parameter init**; calls through the `0x84391C` function pointer (§15.3) |
+| `0xABB8` | 368 | `0xAD3E` | **link parameter init**; calls through the `0x84391C` function pointer (§15.4) |
 | `0xAD2C` | 188 | **none** | registered by `0x9A66` (`0xAD2D`) |
 | `0xAD8C` | 92 | `0x4752` / `0x4864` | **scheduler block init** |
 | `0xADE8` | 214 | `0x2B6A` | **arms the tick interrupt** (§13.5) |
@@ -652,10 +643,9 @@ u32[+0x1C] = 8000                        ; 500 us
 byte[+0x21] = 67
 ```
 
-### 13.7 Update to §12.7 — the conclusion changed
+### 13.7 `0x843C0C` fields and `+0x04`
 
-§12.7 listed two readings for `+0x04` side by side (a link-layer step number vs an actuator enable).
-The evidence here rules out **both**:
+Every field in this struct points at timing:
 
 - the same struct holds the **timer deadline (`+0x28`)**, the **wakeup compare base (`+0x34`)**,
   the **last-activity tick (`+0x2C`)**, **two millisecond durations (`+0x14`/`+0x18`)** and one
@@ -704,7 +694,7 @@ python tools/tc32_ram.py --func 0xA0B4               # all RAM/IO a function tou
 
 ---
 
-## 15. Second pass (ATT layer, event dispatch, hardware divider, pin map)
+## 15. ATT layer, event dispatch, hardware divider, pin map
 
 Everything here comes from the new `tools/tc32_ram.py`. It propagates constant registers linearly
 inside each function, so `tloadr r3, [r6, #0x37]` resolves to an absolute address and
@@ -713,8 +703,8 @@ each with its read and write sites.
 
 ### 15.1 `0xA0B4`: the real entry, and it is the ATT PDU layer
 
-The earlier "`0xA0B8` has no caller" claim made the **same mistake as the old `0x506E` one** —
-it took the third instruction of a prologue for a function start:
+`0xA0B8` is not an entry — it is the second half of a long prologue. The function really starts at
+`0xA0B4`:
 
 ```
 0xA0B4  tpush {r4, r5, r6, r7, lr}
@@ -778,7 +768,7 @@ It has 11 callers passing **2, 3, 4, 6, 7, 8, 9, 10, 11, 13**. Every case reads
 `0x843D70` is written 16 times and read once — a "last RF state snapshot".
 `0x800740` is read once per case, which confirms it is a tick counter, not an IRQ flag.
 
-### 15.2b Table B (`0xD358`) is the **LL control PDU dispatcher**
+### 15.3 Table B (`0xD358`) is the **LL control PDU dispatcher**
 
 Table B belongs to `0xBC90` (1,116 B), whose only call site is `0x8DDE`, inside the packet handler
 `0x8D04`. Its selector is **offset 10 of the packet**, the same as the `0xD104` table in §6:
@@ -819,7 +809,7 @@ takes the common cleanup path" cannot all hold by accident. So:
 
 All three are compiler-generated `switch` tables; only the index space differs.
 
-### 15.3 `0xABB8` does have a caller, and `0x84391C` is a function pointer
+### 15.4 `0xABB8` does have a caller, and `0x84391C` is a function pointer
 
 `0xAD3E` calls `0xABB8`. It is **link parameter init**:
 
@@ -839,11 +829,10 @@ if (u32[0x843920] & 0x10) {
 This is one whole class of "invisible" calls: **load the pointer from a literal, then `blx` through
 a stub**. The same shape appears at `0xAA1C`, `0xAF9C`, `0x5060`, `0x2DF0` and `0xA6B8`.
 
-> Correction: there are **six** `tjex r3` stubs — `0x5060`, `0x2DF0`, `0xA6B8`, `0xAD28`, `0xAF9C`,
-> `0xAEC4`. The earlier list wrongly included `0xA0B4`, which is a `tpush`. A stub is always
-> `tjex r3` + `nop`, and code calls it as `tjl <stub>` to get `blx r3`.
+> There are **six** `tjex r3` stubs: `0x5060`, `0x2DF0`, `0xA6B8`, `0xAD28`, `0xAF9C`, `0xAEC4`.
+> A stub is always `tjex r3` + `nop`, and code calls it as `tjl <stub>` to get `blx r3`.
 
-### 15.3b `0x9A18`: the stack callback registry — the answer to every "no static entry"
+### 15.5 `0x9A18`: the stack callback registry — the answer to every "no static entry"
 
 `0x9A18` writes seven globals in a row, all **odd (Thumb) function pointers**:
 
@@ -863,7 +852,7 @@ the stack**. That is why their in-degree is zero in a plain `tjl` graph.
 The same function also initialises the link context: `u16[0x843B20+0x12] = -1`, and
 `u32[0x843B20+0x68] = 150<<4 = 2400` when `u8[0x8435D8+1] != 0`.
 
-### 15.3c `0x9E08`: transmit queue enqueue
+### 15.6 `0x9E08`: transmit queue enqueue
 
 The `0x843AD8` callback above is `0x9E08` (17 direct callers, four of them inside `0xA0B4`):
 
@@ -881,7 +870,7 @@ It **copies the frame at `r1` (first byte = length) into the ring TX queue at `0
 
 ⟹ "assemble the ATT response → `0x9E08` enqueue" now closes.
 
-### 15.4 `0x1D0/0x1D4/0x1D8/0x1DC`: the hardware divider
+### 15.7 `0x1D0/0x1D4/0x1D8/0x1DC`: the hardware divider
 
 These four addresses are **four entries into one body**, differing only by `tmov r2, #0..3`:
 
@@ -906,7 +895,7 @@ r4 = f1DC(r4, 60)        ; minutes   → quotient
 
 ⟹ **`0x1DC` = quotient, `0x1D8` = remainder**; every call site uses only 10, 37, 60, 100, 200, 250.
 
-### 15.5 ⚠️ `0x800540` / `0x800548` are the **TRNG**, not GPIO
+### 15.8 ⚠️ `0x800540` / `0x800548` are the **TRNG**, not GPIO
 
 The previous version treated this pair as the "disinfection pins". **Wrong.** `0xC80C` is explicit:
 
@@ -920,7 +909,7 @@ r2 = u32[0x800548] ; store x4              ; 4 words = 16 bytes
 Reset, poll a ready bit, read four words for entropy — standard TRNG usage. `0xC7AC` also reads
 `0x800548` four times in a row. So: **`0x800540` = TRNG control/status, `0x800548` = 32-bit random data**.
 
-### 15.6 The real GPIO map
+### 15.9 The real GPIO map
 
 | Port | Registers | Observed |
 | --- | --- | --- |
@@ -946,7 +935,7 @@ P0 bit 6 = button input (`tand 0x40` in `0x43A0`), unchanged from the previous v
 > only act as a group at power-up, shutdown and teardown. Which bit is which branch cannot be derived
 > statically — it has to be measured on the unit.
 
-### 15.7 Two small things
+### 15.10 Two small things
 
 - `0x2F8C` is not padding: it is the ASCII **`Hi-YM01-12DC2110000`**, a product model string.
   Just past it, in the near-zero 4 KiB hole, sits a small table at `0x327C` (`0x40`, `8`, `0x84307C`)
@@ -955,7 +944,7 @@ P0 bit 6 = button input (`tand 0x40` in `0x43A0`), unchanged from the previous v
   `+0x14`/`+0x18` = `0x186A00` (1,600,000). So it is a **struct base**, not a pointer variable
   (`0x1C6E` only tests it for non-zero).
 
-### 15.8 `0x6538` is the 1 Hz session timer, `0x64D0` is the teardown
+### 15.11 `0x6538` is the 1 Hz session timer, `0x64D0` is the teardown
 
 The `0x6538` that the main loop and `0x5F90` keep cancelling is only 24 instructions:
 
@@ -992,15 +981,13 @@ This also settles the unit question behind §8: that pair is in **seconds, not t
 The session duration is not in either field — it is the profile threshold in `0x6538`: `+0x60` is a
 profile index, `0x50` onwards is the per-profile second table, and `+0x35 != 0` selects a fixed
 180-second profile — which matches the measured "about 3 minutes" (protocol §8.7). Teardown always clears P3 bit 7 and
-P2 bit 4 — which is where those two actuator bits from §15.6 end up.
+P2 bit 4 — which is where those two actuator bits from §15.9 end up.
 
 ---
 
 ## 16. Still unknown
 
-The second pass closed ten items from the previous list (`0xA0B4` / `0xA810` / `0xABB8`, the
-attribution of all three tables, the `0x1DC` hardware divider, the five sub-flags, the GPIO map,
-the `0x3000` hole and the `0x6538` timer). What is left needs the device or a debugger:
+What is left needs the device itself or a debugger:
 
 - `0x1A0`, the second entry from header `0x10`: the body is IRQ context save/restore + `treti` (§9),
   but which IRQ uses it is still open.

@@ -51,6 +51,16 @@
 `0xD7` 只是把启动地址切回 `0x00000`，所以原厂固件始终都在。
 **如果目标设备是单区覆盖式 OTA，这套方法会直接抹掉原厂固件，不要照搬。**
 
+### 2.1 机制细节（pvvx 源码级核查）
+
+- 命令集（`cmd_parser.h`）：`0xD4` 读 flash 块 / `0xD3` 写 flash / `0xD5` 擦扇区 /
+  `0xD7` 换启动 / `0xD1` 清 OTA 区；
+- 切换启动靠镜像偏移 `+8` 处的 4 字节魔数 **`0x544c4e4b`**（`BLE-Hacker.bin` 第 8 字节就是它），
+  `chk_addr_cur_boot()` 从 `0` 按 `0x10000` 步进扫到 `0x40000` 找魔数 ⟹ **镜像必须 64 KB 对齐**；
+- 只针对 TLSR8258：`makefile` 里写死 `-DCHIP_TYPE=CHIP_TYPE_8258`，链接 `-llt_8258`；
+- 两个风险：`chng_boot()` 的 `fsec_patch()` 是「读 4 KB → 擦扇区 → 整块重写」，中途掉电该槽报废；
+  `CMD_ID_WRFB` 写 flash **不校验地址**，可以覆盖 MAC 与射频校准区。
+
 ---
 
 ## 3. 前置条件
@@ -126,7 +136,7 @@ for seq in range(press + 1):          # 注意循环含 e == press
 
 ### 4.4 不要直接用 TelinkMiFlasher 网页版
 
-昨天误判过「协议同源、网页工具很可能写得进去」，实际帧格式差异很大：
+网页工具与本机流程**不能互换**，帧格式差异很大：
 
 | | 本机小程序（一手源码） | TelinkMiFlasher / TelinkOTA |
 | --- | --- | --- |
@@ -306,7 +316,6 @@ assert d[0x20000:0x20010] == open("BLE-Hacker.bin", "rb").read(16)
 - [`firmware/README.md`](../firmware/README.md) — 备份产物、布局与权利说明
 - [`protocol.zh-CN.md`](protocol.zh-CN.md) §8.6 — 本次实测的完整记录与帧数据
 - [`miniprogram.zh-CN.md`](miniprogram.zh-CN.md) §5.1 — 小程序 OTA 链路与分包状态机
-- [`live-test-2026-10-29.md`](live-test-2026-10-29.md) §7 — dumper 的源码级机制核查（含当时的风险分析）
 - `miniprogram/app-service.js` — **帧格式的唯一权威来源**
 - [pvvx/TLSR825x_OTA_Flash_Hacker](https://github.com/pvvx/TLSR825x_OTA_Flash_Hacker) — `BLE-Hacker.bin` 与 `TLSR825xOTA_Hacker.html`
 - [pvvx/ATC_MiThermometer / TelinkMiFlasher](https://pvvx.github.io/ATC_MiThermometer/TelinkMiFlasher.html) — 标准 Telink OTA 实现（**与本机不兼容**）

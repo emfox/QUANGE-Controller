@@ -80,7 +80,7 @@ Other strings: `Hi-YM01-12DC2110000` @`0x2F8C`, `Hi-YM01-12DC2000000` @`0xD3BA` 
 
 > **ACK does not delete the logs.** The dump happened after several `DB 01 05` rounds and 45 ACKs had drained the queue, yet all 189 historical records are still present in flash.
 > This does **not** contradict the "pending-sync queue" model in [protocol §5.3](protocol.en.md): that is the protocol view. ACK advances a **sync cursor/flag** rather than erasing records; "empty" means no unsynced records, not no history.
-> The earlier "logs are deleted after reading" hypothesis is ruled out.
+> So "logs are deleted after reading" is ruled out: ACK only advances the cursor/flag.
 >
 > Still unverified: where that cursor lives. `0x40640 = 01`, `0x42000 = 85 (0x55)` and `0x45000 = 01` are candidates. Confirming it needs a second dump after consuming a few new records.
 
@@ -95,4 +95,4 @@ So: **before the clock is set the RTC starts from zero and logs seconds since 19
 - Header field `0x0C` and the vendor checksum algorithm
 - Exact meaning of `0x41000` (`02 00 00 00 b4 0f 00 00 01 2c 00 00 … 02`), `0x42000 = 85`, `0x45000 = 01`
 - The nearly-all-zero 4 KiB region at `0x03000` (disassembly confirms **0 calls, 0 literal refs**, so it is not code)
-- Semantics of each dispatch case, and the scheduling / log-persistence code path (listed in [Firmware Structure](firmware-structure.en.md) §7)
+- The log-persistence code path (the dispatch table and scheduling are covered in the [code map](firmware-code-map.en.md) §14, §15)

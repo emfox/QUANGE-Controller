@@ -132,8 +132,7 @@ firmware accepts exactly that; reproduce it byte for byte.** For `press = 2479`:
 
 ### 4.4 Do NOT use the TelinkMiFlasher web tool directly
 
-An earlier judgement that "the protocol is the same family, so the web tool would very
-likely write" was wrong. The framing differs substantially:
+The web tool is **not** interchangeable with the vendor flow — the framing differs:
 
 | | Vendor mini program (first-party) | TelinkMiFlasher / TelinkOTA |
 | --- | --- | --- |
@@ -320,7 +319,6 @@ device for research and interoperability.
 - [`firmware/README.md`](../firmware/README.md) — artifacts, layout and rights
 - [`protocol.en.md`](protocol.en.md) §8.6 — full measurement log and raw frames
 - [`miniprogram.en.md`](miniprogram.en.md) §5.1 — the mini program's OTA chain and chunking state machine
-- [`live-test-2026-10-29.md`](live-test-2026-10-29.md) §7 — source-level analysis of the dumper (including the risk assessment made at the time)
 - `miniprogram/app-service.js` — **the only authoritative source for the frame format**
 - [pvvx/TLSR825x_OTA_Flash_Hacker](https://github.com/pvvx/TLSR825x_OTA_Flash_Hacker) — `BLE-Hacker.bin` and `TLSR825xOTA_Hacker.html`
 - [pvvx/ATC_MiThermometer / TelinkMiFlasher](https://pvvx.github.io/ATC_MiThermometer/TelinkMiFlasher.html) — standard Telink OTA (**incompatible with this unit**)
