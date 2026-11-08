@@ -22,8 +22,10 @@ protocol** from the mini program bundle and ships two ready-to-use controllers:
 ### Web app (recommended)
 
 1. Open https://emfox.github.io/QUANGE-Controller/ in **Chrome on Android**
-2. Long-press the button on the device for **3 seconds** to power it on
-3. Tap *Connect* → pick the device (normally `QUANGE-WY020702`, possibly the module default `kHID`)
+2. Long-press the button for **3 seconds** to power it on (skip this on a USB-powered unit,
+   which no longer powers itself off)
+3. Tap *Connect* → pick the device (the main advertising name is fixed at `QUANGE-WY020702`;
+   the module default `kHID` appears only in the **first packet** of each scan, see *Known limitations*)
 4. Tap *Read from device* → add/remove entries → *Save to device*
 
 The page shows live state: idle / sterilizing with countdown, next run, battery, firmware version

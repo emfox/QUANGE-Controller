@@ -75,7 +75,7 @@
 <body>
 
 <h1>全格（QUANGE）智能杀菌牙刷杯架</h1>
-<p class="hint">蓝牙直连 · 无需绑定 · 无需安装</p>
+<p class="hint">蓝牙直连 · 无需绑定 · 无需安装 · 型号 WY020702</p>
 
 <div class="banner" id="unsupported">
   当前浏览器不支持 Web Bluetooth。请用 <b>Android 版 Chrome</b> 打开本页（iOS 不支持）。
@@ -101,8 +101,11 @@
     </button>
   </div>
   <p class="hint" style="margin:10px 0 0">
-    设备开机后的广播名可能是品牌名，也可能是模块默认名 <b>kHID</b>；
-    同时也按广播里的 0x1812 / 0x180F 服务兜底筛选。列表为空时多等几秒再点一次。
+    主广播名固定为 <b>QUANGE-WY020702</b>；<b>kHID</b> 是模块出厂默认名，实测仅在
+    <b>每轮扫描的第一个包</b>偶现（扫描器把 scan response 回吐成主名），之后固定不变，
+    并非两种名字来回轮换。广播里的 <b>0x1812</b> 只是残留声明（设备实际没有 HID 服务），
+    与真实存在的 <b>0x180F</b> 电池服务一起用于兜底筛选。
+    别在扫描刚启动的第一秒就按名字下结论；找不到时点「显示全部蓝牙设备」按 MAC 选。
   </p>
 </div>
 
@@ -129,8 +132,10 @@
     <button id="btnSave">保存到设备</button>
   </div>
   <p class="hint" style="margin:12px 0 0">
-    最多 4 条（设备固件硬上限，多出的会被静默丢弃），每条 3~6 分钟。保存时整表覆盖，设备上原有定时会被替换。
-    多条之间的间隔需大于 1 小时，且都在首个定时之后 23 小时内。
+    最多 <b>4 条</b>（实测固件硬上限，第 5 条会被静默丢弃），保存时整表覆盖，设备上原有定时会被替换。
+    每条 3~6 分钟、相邻间隔 ≥59 分钟、全部落在首个定时之后 23 小时内 —— 后三条都是
+    <b>原厂小程序的前端规则，固件完全不校验</b>（相隔 30 分钟的两条实测被原样接受）。
+    本页有意保留这些校验，以免设出原厂 App 里做不到的配置。
   </p>
 </div>
 
@@ -141,10 +146,12 @@
     <button id="btnReadLogs" class="ghost">读取记录</button>
   </div>
   <p class="hint" style="margin:12px 0 0">
-    设备逐条推送记录（最新的在前），收到一条要回一次确认才会给下一条，单次最多读 20 条。
-    设备时钟被重置过的旧记录会显示为「时间未知」。<br>
-    <b>注意：日志是一次性的</b>——每确认一条就消费一条，读过的不会再回来；连点两次会
-    拿到两段不重叠的记录。想留档请把本次输出存成文本。
+    日志是设备上的<b>待同步队列</b>（最新的在前）：逐条推送，每回一次确认才给下一条，
+    不确认就重发同一条（不是卡死）。本页单次最多读 20 条。
+    未对时 / 时钟丢失期间产生的记录时间戳异常，显示为「时间未知」；USB 常供电后时钟不再丢，
+    这类记录不再产生。<br>
+    <b>注意：每确认一条就消费一条</b>，连点两次拿到的是两段不重叠的记录；队列排空后无法用协议
+    回溯历史（记录仍在 Flash 里，只是不再返回）。想留档请把本次输出存成文本。
   </p>
 </div>
 
@@ -179,14 +186,22 @@
       Number.isInteger(it.m) && it.m >= 0 && it.m <= 59 &&
       DURATIONS.includes(it.d);
 
-  // Match on prefixes only, never on an exact model (suffixes differ by batch)
+  // Match on prefixes only, never on an exact model (suffixes differ by batch).
+  // Firmware reverse engineering (2026-11-08) settled the advertising layout:
+  //   ADV      0xCCEC -> "QUANGE-WY020702"   (stable main name)
+  //   SCAN RSP 0xCD00 -> "kHID" + UUID list 0x1812/0x180F + Manufacturer Data
+  // A scanner may report the SCAN RSP name as the main name, which is why kHID shows
+  // up only in the first packet of each scan (1/121, 1/98) and never alternates.
   const NAME_FILTERS = [
     { namePrefix: "QUANGE" },
     { namePrefix: "Hi-" },
     { namePrefix: "kHID" },
-    // 0x1812 is leftover config (the device has no HID service); it helps when the name
-    // is wrong, but it comes from the same config block, so it is not a guarantee.
-    // The vendor mini program scans by 0x1812 too.
+    // 0x1812 is a leftover declaration, not a capability: "12 18" occurs exactly
+    // once in the whole 512 KiB image (the SCAN RSP UUID list) and all five HID
+    // characteristic UUIDs are absent. The device has no HID service; 0x180F
+    // (battery) is real. Both still work as scan filters, but neither is a stable
+    // identifier -- only the MAC is. The vendor mini program scans by 0x1812 and
+    // hardcodes "QUANGE-WY020702" in two places.
     { services: [0x1812] },
     { services: [0x180F] }
   ];
@@ -295,9 +310,11 @@
       const bat = parseInt(s.slice(16, 18), 16);
       if (!isNaN(bat) && bat >= 0 && bat <= 100) $("battery").textContent = bat + "%";
       if (cmd === "01") {
-        const a0 = parseInt(s.slice(8, 12), 16);
-        const a1 = parseInt(s.slice(12, 16), 16);
-        const left = Math.max(0, a0 - a1);
+        // hex 8..12 / 12..16 are the run's TOTAL / ELAPSED seconds (counters,
+        // NOT timestamps -- confirmed by 6 samples during a real 180 s cycle, §5.1).
+        const total = parseInt(s.slice(8, 12), 16);
+        const elapsed = parseInt(s.slice(12, 16), 16);
+        const left = Math.max(0, total - elapsed);
         $("stateMain").textContent = `消杀中 · 剩余 ${Math.floor(left / 60)}分${left % 60}秒`;
         $("stateMain").style.color = "var(--ok)";
       } else {
@@ -432,7 +449,7 @@
     const mins = list.map(x => x.h * 60 + x.m).sort((a, b) => a - b);
     for (let i = 0; i < mins.length; i++) {
       const next = (i + 1 < mins.length) ? mins[i + 1] : mins[0] + 1440;
-      if (next - mins[i] < 59) return "两条定时的间隔不能小于 1 小时";
+      if (next - mins[i] < 59) return "两条定时的间隔不能小于 59 分钟";
     }
     // Span from the first to the last schedule, allowing for crossing midnight
     const span = mins[mins.length - 1] - mins[0];
@@ -471,6 +488,9 @@
       chWrite = await svc.getCharacteristic(CH_WRITE);
       try {
         chNotify = await svc.getCharacteristic(CH_NOTIFY);
+        // Subscribe BEFORE any DB 04 02: the device drops that reply (and does not
+        // cache it) when nobody is listening yet, so refreshAll() must stay below
+        // this line. Measured 2026-11-07; see protocol §5.1.
         await chNotify.startNotifications();
         chNotify.addEventListener("characteristicvaluechanged", onNotify);
         log("已订阅状态上报");
@@ -521,7 +541,9 @@
   }
 
   // The device only returns the list after the full sequence:
-    // time sync -> log -> list (copied from the vendor mini program)
+  // time sync -> log -> list (copied from the vendor mini program).
+  // Keep >= 0.5 s between adjacent frames: at 0.25 s spacing 8/12 readList replies
+  // were lost, at 0.6 s all 8 arrived (measured 2026-11-08, protocol §5.3).
   async function readList() {
     pendingList = true;
     await send(frameQuery(), "对时");
@@ -554,7 +576,9 @@
       n.className = "no"; n.textContent = String(i + 1);
       const t = document.createElement("span");
       t.style.flex = "1";
-      // Records from before a clock reset have timestamps near 0; show them as unknown
+      // Records written while the RTC was unset use the 1970-based clock (small,
+      // 3600-multiple values), so they are not wall-clock times. USB-powered units
+      // never lose the clock and no longer produce these (firmware-analysis §5).
       t.textContent = r.ts > 1600000000 ? fmtTime(r.ts) : "时间未知";
       const u = document.createElement("span");
       u.style.cssText = "color:var(--sub);font-size:13px";
@@ -567,8 +591,11 @@
     });
   }
 
-  // The device pushes one record at a time and needs a DB060601 + timestamp ack
-    // before it sends the next
+  // The log is a pending-sync queue: one record at a time, each needs a
+  // DB060601 + start-timestamp ack to advance. Without an ack the device RESENDS
+  // the same record (not a stall). ACK moves the sync cursor; the 200-slot Flash
+  // table itself is not erased (firmware-analysis §4), so history cannot be
+  // retrieved again over BLE once the queue is drained.
   async function fetchLogs() {
     logs = [];
     renderLogs();
@@ -643,7 +670,7 @@
     $("btnStart").onclick = () => send(FRAME_START, "立即消杀");
     $("btnStop").onclick = () => send(FRAME_STOP, "关闭");
 
-    log("准备就绪。先长按设备按键 3 秒开机，再点「连接设备」。");
+    log("准备就绪。电池机型先长按设备按键 3 秒开机；USB 常供电机型不再自动关机，可直接连接。");
   }
 
   document.addEventListener("DOMContentLoaded", init);
