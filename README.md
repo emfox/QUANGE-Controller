@@ -95,6 +95,7 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 │   ├── ota_dump.py                    OTA 导出 ROM（⚠️ 不可逆，见 docs/ota-dump.zh-CN.md）
 │   ├── rom_analyze.py                 ROM 静态分析（只读）
 │   ├── tc32_disasm.py                 TC32 反汇编与调用图（只读）
+│   ├── tc32_ram.py                    RAM/IO 访问矩阵（常量传播，只读）
 │   ├── cmd_probe.py                   发原始帧并记录回包（用于验证未知命令）
 │   └── wxapkg_unpack.py               wxapkg 解包器（含 V1MMWX 新格式）
 ├── firmware/

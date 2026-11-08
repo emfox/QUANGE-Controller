@@ -101,6 +101,7 @@ Full field descriptions, reply parsing and the init sequence:
 │   ├── ota_dump.py                    OTA ROM dump (⚠️ irreversible, see docs/ota-dump.en.md)
 │   ├── rom_analyze.py                 Static ROM analysis (read-only)
 │   ├── tc32_disasm.py                 TC32 disassembly and call graph (read-only)
+│   ├── tc32_ram.py                    RAM/IO access matrix (constant propagation, read-only)
 │   ├── cmd_probe.py                   Send raw frames and log replies (unknown-command probing)
 │   └── wxapkg_unpack.py              wxapkg unpacker (incl. the V1MMWX format)
 ├── firmware/
