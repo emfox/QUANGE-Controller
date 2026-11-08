@@ -125,11 +125,8 @@ Full field descriptions, reply parsing and the init sequence:
     ├── firmware-structure.en.md       Vendor firmware structure (English)
     ├── miniprogram.zh-CN.md          小程序结构与取包方法（Chinese）
     ├── miniprogram.en.md             Mini program internals (English)
-    ├── mi-home-migration.zh-CN.md     Mi Home migration: comparable devices (Chinese)
-    ├── mi-home-migration.en.md        Mi Home migration: comparable devices (English)
-    ├── mi-home-route3.zh-CN.md        Route 3: whitelist boundary (Chinese)
-    ├── mi-home-route3.en.md           Route 3: whitelist boundary and sandbox (English)
-    └── live-test-2026-10-29.md       Full real-hardware test log (GATT tree, pitfalls)
+    ├── mi-home.zh-CN.md               Mi Home: feasibility and boundaries (Chinese)
+    └── mi-home.en.md                  Mi Home: feasibility and boundaries (English)
 ```
 
 ---
@@ -148,13 +145,10 @@ Full field descriptions, reply parsing and the init sequence:
 | UVC | Seoul Viosys 275 nm |
 | Original app | WeChat mini program *莱枫智能生活* (appid `wx9528fce803d3ba0e`, offline) |
 
-> **Entity check (2026-11-08)**: the WY020702 box/manual names Shanghai Laifeng, matching its
-> business registration, its domain and a related-party disclosure by listed company Chahua.
-> **"莱枫智能生活" is the mini program's name, not a company.** The "Hangzhou Laifeng
-> Intelligent" entity mentioned in earlier notes **does not exist**: the Hangzhou companies with
-> similar names are unrelated (Hangzhou Laifeng E-Commerce Co. was dissolved on 2022-07-28).
-> Brand owner ≠ module/firmware/OEM still holds (Telink module, OUI `1C:45:C2` = Huizhou Sanxin,
-> OEM in Zhongshan), but that does not imply a "Hangzhou" solution vendor.
+> **Entity**: the WY020702 box/manual names Shanghai Laifeng, matching its business registration,
+> its domain and a related-party disclosure by listed company Chahua. **"莱枫智能生活" is the mini
+> program's name, not a company.** Brand owner ≠ module/firmware/OEM (Telink module,
+> OUI `1C:45:C2` = Huizhou Sanxin, OEM in Zhongshan).
 > Sources: [box/manual photos](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32), [business registry](https://aiqicha.baidu.com/company_detail_10059015340660), [Chahua disclosure](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF).
 
 ---
@@ -210,9 +204,8 @@ In short: **the bundle must be decrypted; the protocol does not.**
   mini program UI rules** (two entries 30 minutes apart were stored verbatim). The web app and
   script still enforce them **on purpose**, to match the vendor app and prevent configurations
   the original app could never produce; bypass with `set_timer.py --force`;
-- **Power-loss / battery-swap scenarios no longer apply**: the test unit has been converted to
-  USB power, so it neither powers off nor loses its clock. Items such as "does the schedule
-  survive a battery swap" have been closed in protocol §9 and are no longer tracked;
+- **Power-loss / battery-swap scenarios do not apply**: the test unit has been converted to USB
+  power, so it neither powers off nor loses its clock (protocol §9);
 - **Usage history is permanently lost**: the history never lives on the device — the mini program
   streams the log (`BD 08 05`) up to `api.sh-lifefun.cn`, then reads it back through
   `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
@@ -228,8 +221,9 @@ In short: **the bundle must be decrypted; the protocol does not.**
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never
   written to the device**. Unavailable now;
-- `DB 01 A0` (device reset) is **deliberately not implemented** — the vendor sends it on unbind,
-  it may wipe the schedule, and it has no non-destructive use;
+- `DB 01 A0` is **factory reset and deliberately not implemented** — it erases the log table, the
+  config and the queue index and resets the schedule to 08:00 / 20:00. Destructive, irreversible,
+  no non-destructive use;
 - **Firmware update is no longer possible**: the mini program ships a complete OTA implementation
   (Telink-style OTA with CRC16 chunking), but both the update check and the download go through
   `api.sh-lifefun.cn`, whose DNS record survives while ports 80/443 time out. The mechanism is
@@ -238,16 +232,13 @@ In short: **the bundle must be decrypted; the protocol does not.**
   firmware backup now exists ([docs/protocol.en.md](docs/protocol.en.md) §8.6, files under
   [`firmware/`](firmware/README.md)). The full reproduction procedure is in
   **[docs/ota-dump.en.md](docs/ota-dump.en.md)** ([中文](docs/ota-dump.zh-CN.md)).
-  Flashing is still irreversible — **no third-party firmware is shipped here and DIY attempts
-  are not recommended**;
+  Flashing itself is reversible (dual-slot layout plus the `D7` boot flag), but **no third-party
+  firmware is shipped here and DIY attempts are not recommended**;
 - **The state reply depends on subscription order**: state, battery and next-run time all come
-  from the reply to `DB 04 02`. Measured 2026-11-07: you must **subscribe to `1002` before
-  sending**, otherwise the reply is dropped and not buffered — that was the cause of the older
-  "repeatedly no reply" reports. Both clients here subscribe first and are unaffected
-  (see [docs/protocol.en.md](docs/protocol.en.md) §3.2).
-  Re-tested: **state replies are normal during a sterilization run** (6/6), so the earlier
-  single "no reply during the power-on run" observation does not hold — the device was
-  probably not ready yet right after power-up (see protocol §8.5);
+  from the reply to `DB 04 02`. You must **subscribe to `1002` before sending**, otherwise the
+  reply is dropped and not buffered — that is the cause of "repeatedly no reply". Both clients
+  here subscribe first and are unaffected (see [docs/protocol.en.md](docs/protocol.en.md) §3.2).
+  **State replies are normal during a sterilization run** (6/6, protocol §8.5);
 - The device advertises very rarely. If connecting fails, move it closer; on a stock
   battery-powered unit you can also power-cycle it (**not needed on the USB-powered test unit,
   and a restart cannot bring back already-consumed log records**).
