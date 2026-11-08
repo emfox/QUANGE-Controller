@@ -134,17 +134,44 @@ Item 3 is the real effort: AES-128, CCM mode, P-256 point multiplication, SHA-25
 
 ### 9.1 Sterilizer / germicidal categories — all Wi-Fi
 
-| Category | Model | Product ID | Protocol | Vendor |
-| --- | --- | --- | --- | --- |
-| `sterilizer` | `uvfive.steriliser.maine` (FIVE knife/chopstick steriliser) | **6638** | Wi-Fi | FIVE |
-| `sterilizer` | `xiaomi.steriliser.uvs01` (Mijia smart steriliser) | **25643** | Wi-Fi | Xiaomi |
-| `germicidal-lamp` | `uvfive.s_lamp.slmap2` (FIVE UVC lamp) | **68812** | MiIO (Wi-Fi) | FIVE |
-| `germicidal-lamp` | `ziwooo.s_lamp.uvc` (Ziwooo Pro) | **70276** | MiIO (Wi-Fi) | Ziwooo |
-| `foot-bath` | `xiaomi.foot_bath.mizs1` (Mijia **sterilising** foot bath) | **13223** | **BLE Mesh** | Xiaomi |
+| Category | Model | Product ID | Protocol | Vendor | Released |
+| --- | --- | --- | --- | --- | --- |
+| `sterilizer` | `uvfive.steriliser.maine` (FIVE smart knife/chopstick steriliser) | **6638** | **Wi-Fi** | FIVE | 2021-11 |
+| `sterilizer` | `xiaomi.steriliser.uvs01` (Mijia smart steriliser, 25 L) | **25643** | **Wi-Fi** | Xiaomi | 2025-10 |
+| `germicidal-lamp` | `uvfive.s_lamp.slmap2` (FIVE smart UVC lamp) | **68812** | **MiIO/Wi-Fi** | FIVE | 2020-03 |
+| `germicidal-lamp` | `ziwooo.s_lamp.uvc` (Ziwooo UVC lamp Pro) | **70276** | **MiIO/Wi-Fi** | Ziwooo (Shanghai) | 2020-09 |
+| `foot-bath` | `xiaomi.foot_bath.mizs1` (Mijia **sterilising** foot bath) | **13223** | **BLE Mesh** | Xiaomi | — |
+
+All four Wi-Fi/MiIO devices are listed as "gateway required: no" — they join the router, not Bluetooth.
+
+Separately, `uvfive.steriliser.suger` **has a spec but no product page**: its service tree is the
+standard seven-property model (`fault` / `mode` 15·30·60 / `on` / `status` Idle·Busy /
+`target-time` 15–60 step 15 / `working-time` / `left-time`, plus `alarm`,
+`physical-controls-locked` and `door`), yet `home.miot-spec.com/p/uvfive.steriliser.suger` is a 404
+and the page only carries a `v2debug` tag. ⟹ an **unreleased template**, with no PID.
 
 Conclusion: **there is no BLE model in this category at all.** And the PID does not just tag the category, it picks the **provisioning channel** — given a Wi-Fi PID, Mi Home runs the Wi-Fi flow, so a BLE device does not even behave correctly at the discovery stage. "Borrow a sterilizer PID" is the empty set.
 
 The only BLE one is the foot bath `13223`, which is a foot bath and is mesh (certificate chain).
+
+### 9.1b Correction: the Oclean S1 has **no PID and no app at all**
+
+The previous version held the Oclean S1 up as an example of genuine Mi Home integration. **Wrong.**
+Checked against the official product page and Oclean's own FAQ:
+
+- it is not in `home.miot-spec.com` — **no model, no PID**;
+- every operation in the official FAQ happens on the device itself: "hanging on the wall it
+  auto-sterilises every **6 hours for 2 minutes**; pull the cord once for a **5 minute** cycle, then
+  back to standby; take it off the wall and it powers down";
+- the spec sheet lists a 1000 mAh cell, Type-C, UVC-LED plus a blue indicator and a hall switch —
+  **no wireless connectivity item of any kind** (no BLE, no Wi-Fi).
+
+⟹ The Oclean S1 is a **purely electromechanical timer product** that merely *sells* on Youpin. Its
+"every 6 hours" is the same design idea as this unit's four slots, which shows that **the default
+shape of this category is not connected at all**.
+
+Genuinely integrated: only FIVE (6638 / 68812), Ziwooo (70276) and Xiaomi itself (25643) — and all
+four of those are **Wi-Fi**.
 
 ### 9.2 Switch / relay category — BLE Mesh is everywhere
 
@@ -248,7 +275,8 @@ Its actual connection is the vendor's own WeChat mini program plus a private BLE
 
 ### 11.3 How third parties that genuinely integrate do it
 
-Take the Oclean S1 crowdfunded on Youpin. The path is the standard three pieces, none skipped:
+Take FIVE's knife/chopstick steriliser (`uvfive.steriliser.maine`, PID 6638). The path is the
+standard three pieces, none skipped:
 
 1. **enterprise identity**: business licence → Xiaomi IoT enterprise group;
 2. **a Xiaomi module**: Wi-Fi module (with its triplet) or BLE module (with its certificate chain) — bought, already certified;
@@ -256,12 +284,20 @@ Take the Oclean S1 crowdfunded on Youpin. The path is the standard three pieces,
 
 So they did not bypass the barrier — they **walked through it**, by obtaining the qualification, the module and the production registration.
 
+Note their own choice of transport: both 6638 and 25643 say "gateway required: **no**", because they
+talk to the router directly. **This category never even entered the BLE stack** — the gateway
+question does not arise for them.
+
 ### 11.4 Three kinds of "Mi Home integrated"
 
 | Kind | Test | Example |
 | --- | --- | --- |
-| **genuinely integrated** | shows up in Mi Home, binds, can be controlled | Oclean S1, FIVE, Ziwooo, Xiaomi's own |
-| **marketing adjacency** | only "fits Mijia brushes", "sold on Youpin", "Mijia ecosystem brand" | this unit, WY020702 |
+| **genuinely integrated** | shows up in Mi Home, binds, can be controlled | FIVE (6638 / 68812), Ziwooo (70276), Xiaomi (25643) |
+| **marketing adjacency** | only "fits Mijia brushes", "sold on Youpin", "Mijia ecosystem brand" | this unit, WY020702, **Oclean S1** |
 | **a different ecosystem** | its own app or mini program, borrowing the smart-home aura | most white-label holders |
+
+Oclean S1 deserves its own line: it is sold on Youpin, made by a Huami-affiliated brand, and is
+**completely unconnected**. It is not even "a different ecosystem" — it has no ecosystem, just a
+timer and a hall switch.
 
 The second kind is the majority. Which is why it looks like "everything has Mi Home" — **"Mijia" here is often a channel or a size, not a protocol**.
