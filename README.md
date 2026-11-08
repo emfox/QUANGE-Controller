@@ -93,6 +93,9 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 │   ├── blectx.py                      BLE 公共模块
 │   ├── probe.py                       只读诊断（扫描 / 监听通知）
 │   ├── ota_dump.py                    OTA 导出 ROM（⚠️ 不可逆，见 docs/ota-dump.zh-CN.md）
+│   ├── rom_analyze.py                 ROM 静态分析（只读）
+│   ├── tc32_disasm.py                 TC32 反汇编与调用图（只读）
+│   ├── cmd_probe.py                   发原始帧并记录回包（用于验证未知命令）
 │   └── wxapkg_unpack.py               wxapkg 解包器（含 V1MMWX 新格式）
 ├── firmware/
 │   ├── rom_512k.bin                   整机 flash 备份（512 KB）
@@ -106,6 +109,10 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
     ├── protocol.en.md                 Protocol (English)
     ├── ota-dump.zh-CN.md              ROM 导出复现步骤（中文，⚠️ 不可逆）
     ├── ota-dump.en.md                 ROM dump procedure (English)
+    ├── firmware-analysis.zh-CN.md     原厂固件静态分析（中文）
+    ├── firmware-analysis.en.md        Vendor firmware analysis (English)
+    ├── firmware-structure.zh-CN.md    原厂固件功能结构 / 反汇编（中文）
+    ├── firmware-structure.en.md       Vendor firmware structure (English)
     ├── miniprogram.zh-CN.md           小程序结构与取包方法（中文）
     ├── miniprogram.en.md              Mini program internals (English)
     └── live-test-2026-10-29.md        真机测试全过程记录（含 GATT 树、踩坑）

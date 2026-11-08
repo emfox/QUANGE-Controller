@@ -218,7 +218,7 @@ def find_char(client, spec: str):
     s = str(spec).lower().replace("-", "").strip()
     chars = [c for svc in client.services for c in svc.characteristics]
     for c in chars:
-        if c.uuid.lower() == s:
+        if c.uuid.lower().replace("-", "") == s:
             return c
     if s.isdigit() and len(s) <= 3:
         for c in chars:

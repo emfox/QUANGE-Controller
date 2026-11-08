@@ -136,13 +136,14 @@ DB | CMD | SUB | [LEN] | [DATA...]
 | --- | --- | --- |
 | Start sterilization now | `DB 02 04 01` | `BD 0B 02` |
 | Stop | `DB 02 04 00` | `BD 0B 02` |
-| Query state | `DB 04 02` + 4-byte unix seconds | `BD 0E 02` etc. by design (§5.1); **this firmware never replies**, see §9 |
+| Query state | `DB 04 02` + 4-byte unix seconds | `BD 0E 02` + … (§5.1); **the first frame after each connection is dropped — send it twice** (measured 2026-11-08, see §3.5) |
 | **Query schedule** | **`DB 01 07`** | `BD 0D 07` |
 | Query usage log | `DB 01 05` | `BD 08 05` |
 | **Set schedule (whole-list replace)** | `DB 08 08` + `Count` + `[HH MM 0D] × Count` | `BD 0D 08`, **but it may not reply**; always verify with `DB 01 07` |
 | Delete entries | `DB 00 08` + `Count` + `[HH MM 0D] × Count` | — |
 | Version | `DB 01 A4` | `BD 06 A2` + version field (parsed as `14`, see note below) |
-| Device reset | `DB 01 A0` | — |
+| Device info queries | `DB 01 A0` / `A2` / `A3` / `A5` / `A6` | see §3.5 (measured 2026-11-08) |
+| Device reset (old label, **not reproduced**) | `DB 01 A0` | replied `BD 01 A0 00`, device did not reset — see §3.5 |
 | Log acknowledgement | `DB 06 06 01` + 4-byte timestamp | — |
 | OTA chunks | `01 FF` / `02 FF ...` | — |
 
@@ -270,6 +271,36 @@ inferred from the source.
 | `DB 00 08 00` | 0 frames in this window; an all-`FF` empty table arrived in the next | Cleared, but the reply was delayed |
 
 As with `DB 08 08`: **clearing does not guarantee an immediate reply — always read back.**
+
+### 3.5 Device info queries (measured 2026-11-08)
+
+`DB 01` followed by `A0`–`A6` is a group of queries the **vendor mini program never uses**
+(those constants do not appear in `miniprogram/app-service.js`; they are firmware-side leftovers).
+Measured on real hardware, one frame at a time:
+
+| Sent | Reply | Reading |
+| --- | --- | --- |
+| `DB 01 A0` | `BD 01 A0 00` | 1 status byte; **no reset observed**, later commands still worked |
+| `DB 01 A2` | `BD 07 A2 1C45C2009BB6 00` | MAC + `00`, stable across reads |
+| `DB 01 A3` | `BD 11 A3 4C4657593032303730322F 27BC5DB2 0002` | `"LFWY020702/"` + 6 bytes, tail meaning unknown |
+| `DB 01 A4` | `BD 06 A2 303030303134` | ASCII `"000014"`, firmware version (**reply type is `A2`, not `A4`**) |
+| `DB 01 A5` | `BD 07 A5 1C45C2009BB6 00` | identical to `A2` |
+| `DB 01 A6` | `BD 00 00` | empty reply |
+| `DB 01 A1` / `A7` / `A8` | `BD 01 00 30` | default / unimplemented |
+| `DB 01 A9` | `BD 01 00 1C` | also 1 byte but a different value, meaning unknown |
+
+Three measured constraints:
+
+- **The first frame after each connection is always dropped**; send one warm-up frame first. All rows above came after it.
+  This also explains the old conclusion "`DB 04 02` never replies on this firmware" — on 2026-11-08 two
+  `DB 04 02` frames were sent back to back and the second immediately returned
+  `BD 0E 02 00 00B4 0000 64 …`; the device is perfectly healthy.
+- Replies stay `BD <LEN> <TYPE> <DATA>` with `LEN` equal to the payload length (`0x11` = 17 bytes for `A3`).
+- The device disconnects itself after 3–4 consecutive frames per connection; test in batches.
+
+> `DB 01 A0` was previously labelled "device reset", but **with no argument it only returns
+> `BD 01 A0 00` and the device does not reset** — the old label has no basis. Whether
+> `DB 01 A0 xx` resets was not tested (it would trigger the power-on auto cycle and disturb the rest).
 
 ---
 

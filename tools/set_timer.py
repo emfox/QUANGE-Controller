@@ -224,11 +224,14 @@ async def run(a):
     elif a.stop:
         todo = [(bytes.fromhex("DB020400"), "stop")]
     elif a.query:
-        todo = [(status_frame(), "query state")]
+        # The first frame after a connection is often dropped; read-only, so send twice.
+        f = status_frame()
+        todo = [(f, "query state (warm-up)"), (f, "query state")]
     elif a.version:
         # DB 01 A4 -> BD 06 A2, used to capture the firmware version. OTA died
         # with the backend, so this is read-only.
-        todo = [(bytes.fromhex("DB01A4"), "read firmware version")]
+        f = bytes.fromhex("DB01A4")
+        todo = [(f, "read firmware version (warm-up)"), (f, "read firmware version")]
     elif a.list:
         todo = [(status_frame(), "time sync"),
                 (bytes.fromhex("DB0105"), "log query"),

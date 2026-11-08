@@ -99,6 +99,9 @@ Full field descriptions, reply parsing and the init sequence:
 │   ├── blectx.py                     Shared BLE helpers
 │   ├── probe.py                      Read-only diagnostics (scan / listen)
 │   ├── ota_dump.py                    OTA ROM dump (⚠️ irreversible, see docs/ota-dump.en.md)
+│   ├── rom_analyze.py                 Static ROM analysis (read-only)
+│   ├── tc32_disasm.py                 TC32 disassembly and call graph (read-only)
+│   ├── cmd_probe.py                   Send raw frames and log replies (unknown-command probing)
 │   └── wxapkg_unpack.py              wxapkg unpacker (incl. the V1MMWX format)
 ├── firmware/
 │   ├── rom_512k.bin                   Full flash backup (512 KB)
@@ -112,6 +115,10 @@ Full field descriptions, reply parsing and the init sequence:
     ├── protocol.en.md                Protocol (English)
     ├── ota-dump.zh-CN.md              ROM dump procedure（Chinese, ⚠️ irreversible）
     ├── ota-dump.en.md                 ROM dump procedure (English)
+    ├── firmware-analysis.zh-CN.md     原厂固件静态分析（Chinese）
+    ├── firmware-analysis.en.md        Vendor firmware analysis (English)
+    ├── firmware-structure.zh-CN.md    原厂固件功能结构（Chinese）
+    ├── firmware-structure.en.md       Vendor firmware structure (English)
     ├── miniprogram.zh-CN.md          小程序结构与取包方法（Chinese）
     ├── miniprogram.en.md             Mini program internals (English)
     └── live-test-2026-10-29.md       Full real-hardware test log (GATT tree, pitfalls)

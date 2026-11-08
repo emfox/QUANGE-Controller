@@ -19,15 +19,26 @@
 
 | 偏移 | 内容 |
 | --- | --- |
-| `0x00000–0x0DFFF` | **原厂固件**。`rom_vendor_firmware.bin` 即这一段的切片 |
-| `0x20000–0x29B03` | 导出时刷入的 `BLE-Hacker.bin`（39,652 B，**不是原厂内容**） |
-| `0x40000–0x46FFF` | 配置 / 运行记录数据 |
-| `0x76000–0x77FFF` | MAC 与射频校准 |
-| 其余 | 空白 `0xFF` |
+| `0x00000–0x0D3E4` | **原厂固件有效部分**（54,244 B，头部 `0x18` 长度字段确认） |
+| `0x20000–0x29AE4` | 导出时刷入的 `BLE-Hacker.bin`（39,652 B，**不是原厂内容**） |
+| `0x40000–0x40640` | **运行日志表**，200 槽 × 8 B，导出时 189 槽有数据 |
+| `0x41000` / `0x42000` / `0x45000` / `0x46000` | 配置标量（含最后一次对时时间戳） |
+| `0x76000–0x76008` | 反序 MAC + 2 B 校准 |
+| `0x77000` / `0x770C0` / `0x771C0` | 射频校准值 |
+| 其余 | 空白 `0xFF`（含 `0x03000` 起 4 KiB 近全零区） |
+
+`rom_vendor_firmware.bin` 是 `0x00000–0x0E000` 的切片（57,344 B），尾部多出的是空白，
+**有效内容只到 `0x0D3E4`**。
 
 ⚠️ **`rom_512k.bin` 不是纯净的原厂固件镜像**：它包含一次成功的调试固件写入。
 需要原厂固件请用 `rom_vendor_firmware.bin` —— 该区域在导出过程中未被修改，
 已通过双区布局与镜像比对确认。
+
+静态分析结论（固件头、广播/GATT 数据、日志表结构、时间基）见
+[中文](../docs/firmware-analysis.zh-CN.md) / [English](../docs/firmware-analysis.en.md)；
+反汇编与功能结构见 [中文](../docs/firmware-structure.zh-CN.md) / [English](../docs/firmware-structure.en.md)。
+复现命令：`python tools/rom_analyze.py`（`--logs` 打印全部日志槽）、
+`python tools/tc32_disasm.py --functions --xrefs --tables`。
 
 ## 权利与许可
 
