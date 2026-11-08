@@ -118,6 +118,8 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
     ├── firmware-structure.en.md       Vendor firmware structure (English)
     ├── miniprogram.zh-CN.md           小程序结构与取包方法（中文）
     ├── miniprogram.en.md              Mini program internals (English)
+    ├── mi-home-migration.zh-CN.md     接入米家：同类设备调查与属性映射（中文）
+    ├── mi-home-migration.en.md        Mi Home migration: comparable devices (English)
     └── live-test-2026-10-29.md        真机测试全过程记录（含 GATT 树、踩坑）
 ```
 

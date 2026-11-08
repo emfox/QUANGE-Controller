@@ -124,6 +124,8 @@ Full field descriptions, reply parsing and the init sequence:
     ├── firmware-structure.en.md       Vendor firmware structure (English)
     ├── miniprogram.zh-CN.md          小程序结构与取包方法（Chinese）
     ├── miniprogram.en.md             Mini program internals (English)
+    ├── mi-home-migration.zh-CN.md     Mi Home migration: comparable devices (Chinese)
+    ├── mi-home-migration.en.md        Mi Home migration: comparable devices (English)
     └── live-test-2026-10-29.md       Full real-hardware test log (GATT tree, pitfalls)
 ```
 
