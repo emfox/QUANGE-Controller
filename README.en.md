@@ -42,8 +42,8 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # twice a day
 python tools/set_timer.py --query                   # read state + next run
 python tools/set_timer.py --start                   # sterilize right now
 python tools/set_timer.py --list                    # read the schedule from the device
-python tools/set_timer.py --logs                    # read the usage log (read-only, from the cursor)
-python tools/set_timer.py --logs-all                # drain the log to its end marker
+python tools/set_timer.py --logs                    # read the usage log (read-only, read-once)
+python tools/set_timer.py --logs-all                # drain the unread queue
 python tools/set_timer.py --version                 # read the firmware version
 python tools/set_timer.py --stop                    # stop immediately
 python tools/set_timer.py --at 03:00 --dry-run      # print the frame, do not connect
@@ -182,11 +182,12 @@ In short: **the bundle must be decrypted; the protocol does not.**
   `get_device_use_log` to draw the charts. With the backend gone that chain is dead: new sessions
   are no longer recorded and the day/week/month charts are gone for good. `--logs` / `--logs-all`
   still read the records currently on the device, but there's nowhere to keep them.
-  The device has a **read cursor**: each read resumes where the last one stopped rather than
-  starting from the newest record. Protocol commands cannot reset it at the end marker,
-  but **the next scheduled run writes a new record and makes the log readable again** —
-  a USB-powered unit needs no restart. Long-press off/on only if you want the full
-  history immediately. See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
+  Logs are **read once**: the device keeps a pending-upload queue and each ACK consumes
+  one record, so already-read records never come back — save the output on the first read
+  if you want an archive. Once empty, no protocol command can rewind it, but **the next
+  scheduled run writes a new record and makes the log readable again** — a USB-powered
+  unit needs no restart (a power cycle does not bring consumed records back either).
+  See [docs/protocol.en.md](docs/protocol.en.md) §5.3.
   For the cloud side see [docs/miniprogram.en.md](docs/miniprogram.en.md) §5.2;
 - **The device name can't be changed**: `get_device_config` / `update_device_config` are both
   cloud endpoints; the name only ever lives on the server and in local storage and is **never

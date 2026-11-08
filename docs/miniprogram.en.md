@@ -560,15 +560,16 @@ action_type  action type
 
 **With the server gone, this chain is dead.** Consequences:
 
-1. New sessions are **no longer recorded** — the device's log is a ring buffer that overwrites
-   itself once full;
+1. New sessions are **no longer recorded** — the device log is a pending-upload queue:
+   each ACK consumes one record, so with the cloud gone, reading it once discards it
+   (see [protocol.en.md](protocol.en.md) §5.3);
 2. The history charts (day/week/month) are **permanently unavailable**;
 3. `tools/set_timer.py --logs` can still **read the records out of the device on the spot**,
    but there's nowhere to store them and no chart UI.
 
 > If you want an archive, the only option today is to run `--logs` periodically and save the
-> output as text. How many records the device holds and when it wraps isn't visible in
-> `app-service.js` — it needs measurement.
+> output as text — and **save it on the first read**, since acknowledged records never come
+> back. The real queue capacity is unknown; see [protocol.en.md](protocol.en.md) §5.3.
 
 One notable detail in `syncLogData`: on upload failure it **automatically calls `wx.login`
 for a fresh session and retries**, which tells you `rd_session` expires — and that in turn

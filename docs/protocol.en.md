@@ -428,11 +428,22 @@ only when duration is non-zero, and uploads the batch to its backend once `FFFFF
 > Because it is a stream, sending `DB 01 05` **without** acknowledging only ever yields the
 > first record. The acknowledgement carries the record's *start timestamp*, not a sequence number.
 
-#### The read cursor: `DB 01 05` does not rescan from the newest ★
+#### Read-once: `DB 01 05` does not rescan from the newest ★
 
-**The device keeps a persistent cursor.** Each `DB 01 05` resumes where the previous read
-stopped, and **it survives disconnection**. The acknowledgement is the only thing that moves
-the cursor — send `DB 01 05` again without acking and the device **re-sends the same record**.
+**The log is a pending-upload queue, not a re-readable ring buffer.** `DB 01 05` returns
+records that have not been acknowledged yet; each `DB 06 06 01` consumes one, and
+`FFFFFFFF` means the queue is empty. The vendor app uploads every record to
+`uploads_device_use_log` as it arrives and reads history from the server
+([miniprogram.en.md](miniprogram.en.md) §5.2) — the device only keeps what has not been
+synced. That is exactly what a queue is for.
+
+**Acknowledged records never come back**: three consecutive reads are strictly contiguous
+with zero overlap (table below), and even a power cycle on 11-07 did not bring them back.
+On 2026-11-08, six historical timestamps (including `00000000` and `FFFFFFFF`) were sent
+as acknowledgements to try to seek backwards — every one returned only `FFFFFFFF` (§8.5).
+⚠️ Whether this is a physical delete or a non-rewindable read marker cannot be distinguished
+at the BLE layer; **no conclusion**. Only observable behaviour is described below. Without
+an ack, a second `DB 01 05` **re-sends the same record** (not yet consumed).
 
 Measured 2026-11-07, three consecutive connections with no sterilization in between:
 
@@ -446,51 +457,49 @@ Corroborating: `DB 01 05` served `0x00084B70`; without acking, a second `DB 01 0
 
 ⟹ Three consequences for any implementation:
 
-1. **One "read logs" tap returns "the N records after the cursor", not "the newest N".**
-   Tapping twice yields two non-overlapping slices, which looks like "records went missing".
-2. **No ack, no progress**: re-querying without acking returns the same record and can look
-   like a hang.
-3. **The cursor does not wrap immediately after `FFFFFFFF` and cannot be reset over the
-   protocol** (measured 2026-11-08). ACK-ing the end marker (`DB 06 06 01 FFFFFFFF`),
-   re-syncing the clock, reading the schedule, and the full init sequence were all tried —
-   every one still returned `BD0805 FFFFFFFF FFFFFF 00`.
-   **But the log becomes readable again once the next scheduled run writes a record**
-   (measured 07:09 the same day, see §8.5): after the 02:00 scheduled point, a bare
-   `DB 01 05` returned `BD0805 6AEF6720 00B4 00 00` (02:00 / 180 s / scheduled /
-   **start-type**), and the ACK produced `BD0806 FFFFFFFF FFFFFF 00`.
+1. **One "read logs" tap returns "the next N unacknowledged records", not "the newest N".**
+   Tapping twice yields two non-overlapping slices and **already-read records never come
+   back**, which looks like "records went missing". Save the output on the first read if
+   you need an archive.
+2. **No ack, no consumption**: re-querying without acking returns the same record and can
+   look like a hang.
+3. **An emptied queue cannot be rewound over the protocol**: the end-marker ack,
+   re-syncing the clock, reading the schedule, the full init sequence, and arbitrary
+   historical timestamps all return `BD0805/BD0806 FFFFFFFF FFFFFF 00`.
+   **The log becomes readable again once the next scheduled run writes a record**
+   (measured 07:09, see §8.5): after the 02:00 point, a bare `DB 01 05` returned
+   `BD0805 6AEF6720 00B4 00 00` (02:00 / 180 s / scheduled / **start-type**), then the
+   end marker after the ack.
    ⟹ **A USB-powered unit does not need a power cycle**: wait for the next scheduled
-   point and the new record is readable. Power-cycle only if you want the full history
-   right now.
-   ⚠️ The mechanism is undecided: "new records are appended after the cursor" and "the
-   firmware resets the cursor on a scheduled run" both fit the data. Also, a run started
-   with the `DB 02 04 01` command produced **no new log record** (one A/B comparison) —
-   that was the reason for the earlier wrong "only power-on resets it" conclusion.
+   point; a power cycle does not bring consumed records back either.
+   Also, a run started with `DB 02 04 01` produced **no new log record** (one A/B
+   comparison) — only scheduled runs write logs (§8.5).
 
-> **A power cut really loses records — it is not just a cursor illusion** (observed
-> 2026-11-07, not a controlled comparison). Before the cut the chain contained a set of
-> "exact multiple of 3600" class-B timestamps plus the `2026-04-03` record; after a full
-> drain post-reboot all of those were **gone** and the chain started directly at
-> `2026-04-02`, with one new power-on record (`ts=0` / `type=1`). Together with the earlier
-> "newest 3 records vanished" report this points to **the most recent records not being
-> flushed**. To confirm, record the full list before the cut and compare entry by entry
-> afterwards. See §9.
+> **The earlier "a power cut really loses records" inference is withdrawn** (reviewed
+> 2026-11-08). What was seen on 11-07 — class-B timestamps and `2026-04-03` gone, the chain
+> starting at `04-02` — was read as "the most recent records were never flushed". Laying the
+> three dumps out in time shows those records had **already been acknowledged and consumed in
+> earlier runs**: s1 `11-01 → 05-08`, s4 `05-08 → 04-03`, s6 `04-02 → 02-18`, contiguous
+> with zero overlap. "Already consumed" needs no extra assumption about power loss.
+> **Whether a power cut loses anything on top of that is unproven.**
 
 Observed behaviour:
 
-- **Newest first** — only true while the cursor sits at the newest position, see above;
-- **Ring buffer depth = 45 records (measured)**: one drain reached
-  `BD0806 FFFFFFFF FFFFFF 00` after exactly 45 records;
+- **Newest first within the queue**;
+- **45 is not a buffer capacity**: the three reads yielded 37 / 42 / 45 records — those
+  are just the **unread queue lengths** at the time. Real capacity is unknown; §8.3's
+  "depth ≥ 42" and §8.4's "= 45" both mistook queue length for capacity;
 - 44 of 45 had `20..22` = `01` (end), **the oldest was `00`** — so "always `01`" is wrong and
   start-type records do exist, just rarely. All 45 here were 180 s (300 s was measured in §8.2);
 - Timestamps come in two families. **A**: real unix seconds (44 records here,
   `2026-02-18` … `2026-04-02`, 02:00 every day, exactly 24 h apart). **B**: small values
   (`00000000`, `0003D4C2`, `00030570`, …) that are **exact multiples of 3600** and alternate
   **13 h / 11 h** apart, matching the `02:00` and `15:00` schedules.
-- **Class B disappears after a power cycle; class A survives.** The state reply at the same
-  moment still reports a correct wall-clock `next run`. **Inference**: class B was recorded
-  as "hours since power-on" while the clock was unset, and lived only in RAM;
-  **not proven**, mechanism still unknown (see §9). Both families **must be acknowledged**,
-  otherwise the records behind them are unreachable.
+- Class B stops appearing in later reads while class A follows on, consistent with
+  **consumption in time order**; the earlier "class B is RAM-only and lost on power cut"
+  was an **inference, now withdrawn**. Why class B values are exact multiples of 3600 is
+  still unknown (on USB power they cannot recur, see §9). Both families **must be
+  acknowledged**, otherwise the records behind them are unreachable.
 
 ### 5.4 Warnings
 
@@ -624,9 +633,9 @@ Subscribing to `1001` is refused (`Write Not Permitted`), but writing data to it
 | Subscribe afterwards | subscribe `1002`, wait 6 s | **still 0 frames** | **not buffered, not replayed** |
 | Same frame once subscribed | as above | `BD0E02 00 012C 0000 64 6AEF6720 6AEF3956` | immediate reply; `next run` = `2026-11-08 02:00:00` |
 | Idle listen | — (12 s, nothing sent) | **0 frames** | no unsolicited pushes **while idle** (not tested during a run — deliberately dropped, see §9) |
-| Re-query without ack | `DB 01 05` twice, no ack in between | both times `BD0805 00084B70 012C 00 01` | cursor does not move; same record re-sent |
-| Continuous read | `DB 06 06 01` ×42 | 42 records, ending at `0x69CEAEA0` (2026-04-03 02:00) | ring depth **≥ 42** |
-| **Resume across connections** | reconnect, then `DB 01 05` | first record `0x69CD5D20` (2026-04-02 02:00) | **cursor survives disconnection** (see §5.3) |
+| Re-query without ack | `DB 01 05` twice, no ack in between | both times `BD0805 00084B70 012C 00 01` | no ack, no consumption; same record re-sent |
+| Continuous read | `DB 06 06 01` ×42 | 42 records, ending at `0x69CEAEA0` (2026-04-03 02:00) | **unread queue ≥ 42** (not capacity, see §5.3) |
+| **Resume across connections** | reconnect, then `DB 01 05` | first record `0x69CD5D20` (2026-04-02 02:00) | **consumed records do not return**; queue continues (see §5.3) |
 
 > **Log time base anomaly (measured, mechanism unknown).** At the same moment:
 > - state reply `next run` = `0x6AEF6720` = **2026-11-08 02:00:00** (correct wall clock)
@@ -648,8 +657,8 @@ was restored and read back after all write cases** (last row).
 | Step | Sent | Received | Result |
 | --- | --- | --- | --- |
 | State reply | `DB 04 02` + ts, `1002` already subscribed | `BD0E02 00 00B4 0000 64 6AEF6720 6AEF443F` | `next run` = 11-08 02:00; `6AEF443F` = **device clock 23:31:11**, sync worked |
-| Full log drain | `DB 01 05` → `DB 06 06 01` ×45 | 45 records + `BD0806 FFFFFFFF FFFFFF 00` | **ring depth = 45**; first frame `BD0805`, the rest `BD0806` |
-| Cursor wrap | `DB 01 05` again after the end marker | `BD0805 FFFFFFFF FFFFFF 00` | **no wrap**, stays at the end |
+| Full log drain | `DB 01 05` → `DB 06 06 01` ×45 | 45 records + `BD0806 FFFFFFFF FFFFFF 00` | **unread queue = 45** (not capacity, see §5.3); first frame `BD0805`, the rest `BD0806` |
+| Queue emptied | `DB 01 05` again after the end marker | `BD0805 FFFFFFFF FFFFFF 00` | consumed records **do not return** |
 | Idle listen | — (10 s; another 60 s run) | 0 frames | no unsolicited pushes **while idle** (not tested during a run — deliberately dropped, see §9) |
 | **Delete frame** | `DB 00 08 01 020003` | `BD0D08 020003 FF×6 00` | delete frame works (previously only inferred) |
 | Delete, clear all | `DB 00 08 00` | 0 frames here; all-`FF` empty table in the next window | cleared, reply delayed |
@@ -669,10 +678,12 @@ was restored and read back after all write cases** (last row).
 > "it starts sterilizing right after power-on". The clock had not been synced since reboot,
 > hence `ts=0`. **A single observation.**
 
-> **Log chain changed across the power cut.** Before it (§8.3) the chain held a set of
-> class-B "multiples of 3600" timestamps and `2026-04-03`; after it, the 44 historical
-> records were all class-A real unix seconds (`2026-02-18` … `2026-04-02`, 02:00 daily),
-> with class B and `04-03` **absent**. See §9.
+> **Log chain across the power cut (reinterpreted 2026-11-08).** Before it (§8.3) the
+> chain held class-B "multiples of 3600" timestamps and `2026-04-03`; afterwards the 44
+> historical records were all class-A real unix seconds (`2026-02-18` … `2026-04-02`).
+> This was recorded as "power cut loses records"; under the consumption queue model (§5.3)
+> **those had already been acknowledged in earlier runs**, so the chain simply continued
+> at `04-02`. Whether a power cut loses anything extra is unproven.
 
 ### 8.5 2026-11-08 (USB powered, RSSI −70 to −74 dBm, stable link)
 
@@ -687,21 +698,24 @@ was restored and read back after all write cases** (last row).
 | Spacing fix | same sequence at 0.6 s | 8/8 received | keep ≥ 0.5 s between frames |
 | Fake clock | `DB 04 02` + `0x00000100` | state echoed `00000100`, `next run` = `0x6270` | **the timestamp is the clock; schedules use UTC+8 local HH:MM** |
 | State during a run | `DB 02 04 01` under the fake clock, 6 samples at 30 s | 6/6 replied `BD0E02 01`, `12..16` climbed 30→160 s then reset | **counters = total / elapsed; replies are fine during a run** |
-| Cursor reset attempts | ACK `FFFFFFFF` / re-sync / read table / full sequence | all still returned `FFFFFFFF` | **no protocol reset for the cursor** |
-| Real-clock run (command-triggered) | `DB 02 04 01` for 209 s, then read the log | still `BD0805 FFFFFFFF` | **a command-triggered run writes no log**; it says nothing about the cursor |
+| Queue rewind attempts | ACK `FFFFFFFF` / re-sync / read table / full sequence | all still returned `FFFFFFFF` | consumed records **cannot be revisited** |
+| Historical timestamp seek | `DB 06 06 01` + 6 old ts (02-18 / 04-02 / 11-01 / 11-08 / `00000000` / `FFFFFFFF`) | 6/6 only `BD0806 FFFFFFFF`, then `DB 01 05` also `FFFFFFFF` | **no seeking or replay by timestamp** |
+| Real-clock run (command-triggered) | `DB 02 04 01` for 209 s, then read the log | still `BD0805 FFFFFFFF` | **a command-triggered run writes no log**; it says nothing about the queue |
 | Scheduled point recheck | 07:09, bare `DB 01 05` after the 02:00 run | `BD0805 6AEF6720 00B4 00 00`, then `BD0806 FFFFFFFF` after ACK | **a scheduled run writes a record and the log is readable again** |
 | Advertising name | 60 s scan → connect → 60 s scan | `kHID` was only the first packet of each round (1/121, 1/98), all others `QUANGE-WY020702` | **not an alternation; startup default then fixed** |
 
-> **Cursor vs USB power (corrected 07:09)**: protocol commands really cannot reset the
-> cursor after draining to `FFFFFFFF`, but **no power cycle is needed** — the next scheduled
-> run makes the log readable again. The state reply also confirms the 02:00 run happened:
-> `BD0E02 00 00B4 0000 64 6AF01DF0 6AEFAFB5`, with `next run` advanced to 11-08 15:00,
-> device clock 07:09:41, battery 100%, idle.
-> ⚠️ The previous version of this note ("neither protocol commands nor new runs made the
-> log readable again") was **wrong**: the earlier 209 s run was started with
-> `DB 02 04 01`, and command-triggered runs write no log, which was misread as "even new
-> runs do not wrap the cursor". Schedule reads/writes were unaffected throughout. At the
-> end of all tests the real unix clock was in place and the schedule remained
+> **Read-once logs vs USB power**: the log is a pending-upload queue (§5.3) — each ACK
+> consumes one record, and an emptied queue cannot be rewound, but **no power cycle is
+> needed**: the next scheduled run writes a new record and the log is readable again.
+> The 02:00 run is confirmed by the state reply
+> `BD0E02 00 00B4 0000 64 6AF01DF0 6AEFAFB5` (`next run` = 11-08 15:00, device clock
+> 07:09:41, battery 100%, idle).
+> ⚠️ The old "read cursor + 45-record ring buffer" model is disproven: three dumps are
+> contiguous with zero overlap (even across a power cycle), six historical timestamp
+> seeks all failed, and 45 was just that run's unread queue length. Whether records are
+> physically deleted or merely marked read is undecidable here. Also, a `DB 02 04 01`
+> run writes no log — that caused an earlier misreading. Schedule reads/writes were
+> unaffected throughout; the real unix clock was in place and the schedule remained
 > `02:00/3min + 15:00/5min`.
 
 ---
@@ -718,16 +732,20 @@ was restored and read back after all write cases** (last row).
   see §8.5); USB power needs no long-press restart. What is still missing is a **second
   and a multi-day** repetition. The next natural scheduled point is 11-08 15:00 — just
   read the log again then; no dedicated experiment or device change is needed.
+- **Physical mechanism and real capacity of the log queue** — behaviour is measured
+  (ack consumes, no rewind), but "physical delete" vs "non-rewindable read marker" is
+  indistinguishable at the BLE layer, and the capacity is unknown (37 / 42 / 45 were
+  only the unread lengths). Not worth pursuing without reading the Flash directly.
 
 **Deliberately closed, no longer tracked** (with reasons, to avoid repeating the work):
 
 | Item | Why closed |
 | --- | --- |
-| How many logs a power cut loses / does it reset the cursor / does power-on write `type=1` / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios no longer occur |
+| How many logs a power cut loses / does it affect the queue / does power-on write `type=1` / does the schedule survive a battery swap | The test unit is now on **permanent USB power**; these scenarios no longer occur. The old "power cut loses records" inference is withdrawn (§5.3) |
 | Mapping class-B log time base (exact multiples of 3600) | Class B was a product of a **lost / unsynced clock**; on USB power the clock never drops, so it cannot recur. Why two time bases existed is still unknown, but has no practical impact |
 | Does the state reply vanish during the power-on run? | Disproven: 6/6 replies during a run (§8.5). The earlier single zero-reply case was likely a not-yet-ready device |
 | Button / body-radar notifications | No control or configuration interface for either exists in the protocol; a positive result could not control anything |
 | Meaning of the trailing byte in `BD0D07` / `BD0D08` | Settled: clock-derived field, ignore it (§8.5) |
 | What triggers the advertising name switch | Settled: `kHID` appears only in the first packet of a scan, then stays fixed (§8.5) |
 | Does `0x1812` disappear with a renamed device? | Renaming is cloud-only with a dead backend; **no device-side write path**, so it cannot be measured |
-| Ring depth / delete frame / duration byte / `20..22` / cursor wrap | All measured, see §8.4 / §8.5 |
+| Delete frame / duration byte / `20..22` / queue consumption | All measured, see §8.4 / §8.5. "Ring depth 45" and "cursor wrap" were the old model and are disproven |

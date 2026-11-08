@@ -21,10 +21,10 @@ Usage:
     # Read the schedule table off the device (syncs time and log first, then DB 01 07)
     python3 set_timer.py --list
 
-    # Read the sterilization log (continues from the device cursor, see protocol doc 5.3)
+    # Read the next unread log records (each ACK consumes one, see protocol doc 5.3)
     python3 set_timer.py --logs
 
-    # Drain the whole ring buffer up to its end marker
+    # Drain the pending queue up to its end marker
     python3 set_timer.py --logs-all
 
     # Read the firmware version (DB 01 A4 -> BD 06 A2, read-only, never triggers an update)
@@ -154,12 +154,9 @@ def status_frame():
 async def read_logs(client, target, wait=3.0, limit=20, drain=False):
     """Read the sterilization log.
 
-    The device keeps a **persistent cursor**: `DB 01 05` resumes wherever the previous
-    read stopped, and the position survives disconnection. A record only advances the
-    cursor once it is acknowledged with DB060601 + its start timestamp.
-
-    So this does not return "the newest N records" - it returns "the N records after the
-    cursor". Pass drain=True to keep going until the FFFFFFFF end marker.
+    Read-once queue: ACKing a record with DB060601 + its start timestamp consumes it,
+    and consumed records never return. This yields "the next N unacknowledged records",
+    not "the newest N". Pass drain=True to keep going until the FFFFFFFF end marker.
     """
     global LOG_Q
 
@@ -168,8 +165,8 @@ async def read_logs(client, target, wait=3.0, limit=20, drain=False):
         LOG_Q.get_nowait()
 
     log("=== Reading sterilization log ===")
-    log("    the device has a read cursor: this continues from where the last read")
-    log("    stopped, which is NOT necessarily the newest record (protocol doc 5.3)")
+    log("    read-once queue: ACK consumes a record for good; save the output if you")
+    log("    need an archive (protocol doc 5.3)")
     if drain:
         log("    draining until the end marker; this can take a while")
     await client.write_gatt_char(target, status_frame(), response=False)
@@ -195,7 +192,7 @@ async def read_logs(client, target, wait=3.0, limit=20, drain=False):
         s = bytes(data).hex().upper()
         tsh = s[6:14]
         if tsh == "FFFFFFFF":
-            log("    Device reply: no more records (end of the ring buffer)")
+            log("    Device reply: no more records (queue empty)")
             break
         dur = int(s[14:18], 16)
         typ = int(s[18:20], 16)
@@ -392,10 +389,10 @@ def cli():
                     help="read firmware version (DB 01 A4 -> BD 06 A2)")
     ap.add_argument("--list", action="store_true", help="read the schedule table")
     ap.add_argument("--logs", action="store_true",
-                    help="read the next 20 log records (the device has a read cursor, "
-                         "so this continues from the last read, not from the newest)")
+                    help="read the next 20 unread log records (ACK consumes them, so "
+                         "already-read records never come back)")
     ap.add_argument("--logs-all", action="store_true",
-                    help="read log records until the device reports the end of the buffer")
+                    help="drain the unread log queue until the device reports it is empty")
     ap.add_argument("--listen", type=float, default=6.0,
                     help="seconds to wait for replies")
     ap.add_argument("--scan-time", type=float, default=8.0,

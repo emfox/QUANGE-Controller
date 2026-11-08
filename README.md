@@ -40,8 +40,8 @@ python tools/set_timer.py --at "07:00=4,22:00=5"    # 一天两次
 python tools/set_timer.py --query                   # 查状态与下次杀菌时间
 python tools/set_timer.py --start                   # 立即消杀一次
 python tools/set_timer.py --list                    # 读取设备上的定时列表
-python tools/set_timer.py --logs                    # 读取消杀记录（只读，从游标续读）
-python tools/set_timer.py --logs-all                # 一直读到缓冲区末尾
+python tools/set_timer.py --logs                    # 读取消杀记录（只读，一次性）
+python tools/set_timer.py --logs-all                # 一直读到队列为空
 python tools/set_timer.py --version                 # 读固件版本
 python tools/set_timer.py --stop                    # 立即停止
 python tools/set_timer.py --at 03:00 --dry-run      # 只打印帧，不连接设备
@@ -164,9 +164,9 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
   （`BD 08 05`）转存到 `api.sh-lifefun.cn`，再由 `get_device_use_log` 读回来画图。
   服务器没了，这条链路彻底断掉 —— 新的记录不会再被保存，日/周/月曲线永久不可用。
   用脚本 `--logs` / `--logs-all` 仍能把设备里的记录读出来，但没地方存。
-  设备有**读取游标**：每次从上次停下的地方续读，不是重新从最新一条开始；读到末尾后
-  协议手段重置不了，但**下一次定时消杀写入新记录后会自动重新可读**，USB 常供电
-  不必重启；只有想立刻读到完整历史时才需要长按开关机一次，
+  日志是**一次性读取**（待同步队列）：确认一条就消费一条，读过的不会再回来，
+  想留档就在第一次读取时把输出存成文本；排空后协议手段无法回溯，但下一次定时消杀
+  写入新记录后会自动重新可读，USB 常供电不必重启（重启也找不回已读记录），
   见 [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md) §5.3；
   云端那一侧见 [docs/miniprogram.zh-CN.md](docs/miniprogram.zh-CN.md) §5.2；
 - **设备名改不了**：`get_device_config` / `update_device_config` 都是云端接口，
