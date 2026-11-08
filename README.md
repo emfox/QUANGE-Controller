@@ -149,7 +149,8 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 > SRRC 核准数据库中 `2021DP13837` 的申请单位 / 生产厂商同样是该公司，设备型号正是 WY020702。
 > 核准证只列射频参数（2400–2483.5 MHz、≤20 dBm EIRP、占用带宽 ≤3 MHz），
 > **不公开芯片 / 模组型号**，不能替代主控丝印。
-> 见 [铭牌与核准标签实拍](docs/images/nameplate.jpg)、[电池仓与 USB 取电点](docs/images/battery-bay.jpg)
+> 见 [铭牌与核准标签实拍](docs/images/nameplate.jpg)、
+> [机身侧面印刷说明与品牌标识实拍](docs/images/side-printed-text.jpg)
 > （铭牌照片含本机 MAC / SN，经设备所有者同意公开）。
 >
 > 依据：[包装与说明书实拍](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32)、[工商登记](https://aiqicha.baidu.com/company_detail_10059015340660)、[茶花股份公告](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF)、[SRRC 核准结果查询](https://ythzxfw.miit.gov.cn/jgcx/index.html)（核准代码 `2021DP13837`）。

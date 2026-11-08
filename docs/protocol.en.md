@@ -62,8 +62,8 @@
 > Household Products Co., Ltd."; SRRC certificate `2021-13837` lists the same company as
 > applicant/manufacturer with equipment model WY020702. The certificate publishes RF parameters
 > only, not the chip/module part number. See [nameplate and approval label](images/nameplate.jpg)
-> and [battery bay / USB feed](images/battery-bay.jpg) (the nameplate photo shows this unit's
-> MAC/SN, published with the owner's consent).
+> and [printed guide and branding on the side](images/side-printed-text.jpg) (the nameplate photo
+> shows this unit's MAC/SN, published with the owner's consent).
 >
 > **About `kHID`**: it is the Bluetooth module's **factory-default advertising name**, not the
 > product's brand name. The cause is that the upstream vendor (**Shanghai Laifeng Household

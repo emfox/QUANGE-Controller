@@ -157,8 +157,8 @@ Full field descriptions, reply parsing and the init sequence:
 > parameters (2400–2483.5 MHz, ≤20 dBm EIRP, occupied bandwidth ≤3 MHz) and **does not disclose
 > the chip/module part number** — it cannot replace reading the silkscreen.
 > See [nameplate and approval label](docs/images/nameplate.jpg) and
-> [battery bay / USB feed](docs/images/battery-bay.jpg) (the nameplate photo shows this unit's
-> MAC/SN, published with the owner's consent).
+> [printed guide and branding on the side](docs/images/side-printed-text.jpg) (the nameplate photo
+> shows this unit's MAC/SN, published with the owner's consent).
 >
 > Sources: [box/manual photos](http://mp.weixin.qq.com/s?__biz=MzU0MjQxMDE3Mw==&mid=2247484008&idx=1&sn=1f52900b12f12ef3149395d5854b7d32), [business registry](https://aiqicha.baidu.com/company_detail_10059015340660), [Chahua disclosure](http://static.cninfo.com.cn/finalpage/2025-08-23/1224554808.PDF), [SRRC approval lookup](https://ythzxfw.miit.gov.cn/jgcx/index.html) (code `2021DP13837`).
 
