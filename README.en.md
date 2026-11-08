@@ -102,6 +102,7 @@ Full field descriptions, reply parsing and the init sequence:
 │   ├── rom_analyze.py                 Static ROM analysis (read-only)
 │   ├── tc32_disasm.py                 TC32 disassembly and call graph (read-only)
 │   ├── tc32_ram.py                    RAM/IO access matrix (constant propagation, read-only)
+│   ├── mibeacon.py                    MiBeacon broadcast codec (self-tested)
 │   ├── cmd_probe.py                   Send raw frames and log replies (unknown-command probing)
 │   └── wxapkg_unpack.py              wxapkg unpacker (incl. the V1MMWX format)
 ├── firmware/
@@ -126,6 +127,8 @@ Full field descriptions, reply parsing and the init sequence:
     ├── miniprogram.en.md             Mini program internals (English)
     ├── mi-home-migration.zh-CN.md     Mi Home migration: comparable devices (Chinese)
     ├── mi-home-migration.en.md        Mi Home migration: comparable devices (English)
+    ├── mi-home-route3.zh-CN.md        Route 3: whitelist boundary (Chinese)
+    ├── mi-home-route3.en.md           Route 3: whitelist boundary and sandbox (English)
     └── live-test-2026-10-29.md       Full real-hardware test log (GATT tree, pitfalls)
 ```
 

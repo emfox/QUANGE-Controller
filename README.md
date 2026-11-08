@@ -96,6 +96,7 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
 │   ├── rom_analyze.py                 ROM 静态分析（只读）
 │   ├── tc32_disasm.py                 TC32 反汇编与调用图（只读）
 │   ├── tc32_ram.py                    RAM/IO 访问矩阵（常量传播，只读）
+│   ├── mibeacon.py                    MiBeacon 广播编解码（含自检）
 │   ├── cmd_probe.py                   发原始帧并记录回包（用于验证未知命令）
 │   └── wxapkg_unpack.py               wxapkg 解包器（含 V1MMWX 新格式）
 ├── firmware/
@@ -120,6 +121,8 @@ python tools/set_timer.py -n kHID --query            # 只按某个前缀找
     ├── miniprogram.en.md              Mini program internals (English)
     ├── mi-home-migration.zh-CN.md     接入米家：同类设备调查与属性映射（中文）
     ├── mi-home-migration.en.md        Mi Home migration: comparable devices (English)
+    ├── mi-home-route3.zh-CN.md        路线 3：白名单边界与沙盒方案（中文）
+    ├── mi-home-route3.en.md           Route 3: whitelist boundary and sandbox (English)
     └── live-test-2026-10-29.md        真机测试全过程记录（含 GATT 树、踩坑）
 ```
 

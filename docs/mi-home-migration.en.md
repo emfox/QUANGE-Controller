@@ -107,4 +107,6 @@ Route 2 only makes sense if the original board is already dead or the mini progr
 
 ## 8. Appendix: where the L1 broadcast patch fits
 
-`tools/mi_patch.py` does the smallest possible step: it replaces the trailing 8 bytes of the scan response with a MiBeacon frame so a scanner recognises the device as "Mi Home format". It changes no code and needs no relocation, but **it only solves being seen, not being bound** — binding needs the `0xFE95` service and authentication, which is route 3. If we take route 1 or 2, this patch is unnecessary.
+The broadcast layer was originally going to be a static patch (replace the trailing `07 FF AA AA AA AA AA AA` of the scan response with a MiBeacon frame). **That approach is proven impossible**: those six `AA` bytes are a placeholder for the MAC and are overwritten before every broadcast, and the element reserves only 8 bytes, too few for MiBeacon's mandatory fields.
+
+⟹ The broadcast has to be **generated in code**. See the [route 3 analysis](mi-home-route3.en.md) §3. What remains in the repo is `tools/mibeacon.py`, the encode/decode reference for this layer (with a self-test), usable to validate any MiBeacon frame.
