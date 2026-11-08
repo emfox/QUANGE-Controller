@@ -221,3 +221,47 @@ So whether an individual business (个体工商户) can register an enterprise g
 3. If the answer to #2 is yes, getting the licence is the fastest deterministic path; if no, the only options are waiting for a quota or the university programme.
 
 Steps 1 and 2 cost minutes. Do them before spending money on a licence.
+
+## 11. How those "Mi Home integrated" toothbrush sterilisers actually work
+
+### 11.1 First, an identification: this device is one of them
+
+The evidence lines up — this unit is the **QUANGE (全格) smart sterilising toothbrush cup holder, model WY020702**, from Shanghai Caifeng Daily Necessities Co.
+
+| Evidence in the firmware | The real product |
+| --- | --- |
+| broadcast name `QUANGE-WY020702` (`0xCCEB`) | brand QUANGE plus model WY020702 |
+| serial `LFWY020702/…` (flash `0x43000`) | same, `LFWY` + model |
+| model string `Hi-YM01-12DC2110000` (`0x2F8C`) | internal part number |
+| battery query (command `03`, RAM `0x8435A0`) | battery powered — this variant is the cell version |
+| four local schedule slots | the manual says "auto-sterilise every 6 hours", i.e. four a day |
+| fixed 180 s profile (`0x6538`, `+0x35 != 0`) | UVC exposure time |
+| long-press arms / short-press acts (`+0xB` flag) | the manual says "long press to toggle, double press to force a cycle" |
+
+The reviews also mention a "smart radar sensor that only works when nothing moves within 1.5 m" — which GPIO that maps to in the firmware is still unresolved.
+
+### 11.2 But its "Mi Home compatibility" is about size, not protocol
+
+The review's exact wording is "**fits all Mijia electric toothbrushes**". That means the holder slots are wide enough, not that it joins the Mi Home app.
+
+Its actual connection is the vendor's own WeChat mini program plus a private BLE protocol — the 15 commands reverse-engineered in `docs/protocol`. So this device **was never connected to Mi Home**; "make the firmware speak Mi Home" is really adding a path it never had.
+
+### 11.3 How third parties that genuinely integrate do it
+
+Take the Oclean S1 crowdfunded on Youpin. The path is the standard three pieces, none skipped:
+
+1. **enterprise identity**: business licence → Xiaomi IoT enterprise group;
+2. **a Xiaomi module**: Wi-Fi module (with its triplet) or BLE module (with its certificate chain) — bought, already certified;
+3. **a platform-registered PID**: assigned when the product is created, written into the firmware, bound to the MAC in the production system.
+
+So they did not bypass the barrier — they **walked through it**, by obtaining the qualification, the module and the production registration.
+
+### 11.4 Three kinds of "Mi Home integrated"
+
+| Kind | Test | Example |
+| --- | --- | --- |
+| **genuinely integrated** | shows up in Mi Home, binds, can be controlled | Oclean S1, FIVE, Ziwooo, Xiaomi's own |
+| **marketing adjacency** | only "fits Mijia brushes", "sold on Youpin", "Mijia ecosystem brand" | this unit, WY020702 |
+| **a different ecosystem** | its own app or mini program, borrowing the smart-home aura | most white-label holders |
+
+The second kind is the majority. Which is why it looks like "everything has Mi Home" — **"Mijia" here is often a channel or a size, not a protocol**.
