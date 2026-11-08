@@ -92,6 +92,68 @@ def sext(v, n):
     return v - (1 << n) if v & (1 << (n - 1)) else v
 
 
+# Register names follow the SLEIGH file: r10-r15 have ABI aliases.
+ALIAS = {10: "sl", 11: "fp", 12: "ip", 13: "sp", 14: "lr", 15: "pc"}
+CONDS = ["eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
+         "hi", "ls", "ge", "lt", "gt", "le"]
+
+
+def regh(n):
+    return ALIAS.get(n, f"r{n}")
+
+
+def bits(h, lo, hi):
+    return (h >> lo) & ((1 << (hi - lo + 1)) - 1)
+
+
+def reglist(h, top):
+    out = [f"r{i}" for i in range(8) if h >> i & 1]
+    if h >> 8 & 1:
+        out.append(top)
+    return "{" + ", ".join(out) + "}"
+
+
+PH = re.compile(r"%(\d+)-(\d+)([A-Za-z?])|%([DSNOMcsxX])")
+
+
+def render(a, h, addr=0):
+    """Substitute the printf-style placeholders in the objdump format string."""
+    out, pos = [], 0
+    for m in PH.finditer(a):
+        out.append(a[pos:m.start()])
+        pos = m.end()
+        if m.group(1):
+            lo, hi, t = int(m.group(1)), int(m.group(2)), m.group(3)
+            v = bits(h, lo, hi)
+            if t == "r":
+                out.append(regh(v))
+            elif t == "d":
+                out.append(str(v))
+            elif t == "W":
+                out.append(f"0x{v * 4:x}")
+            elif t == "H":
+                out.append(f"0x{v * 2:x}")
+            elif t == "B":
+                out.append(f"0x{(addr + 4) + 2 * sext(v, hi - lo + 1):06x}")
+            elif t == "c":
+                out.append(CONDS[v] if v < len(CONDS) else "?")
+            else:
+                out.append(f"#{v}")
+        elif m.group(4) == "D":
+            out.append(regh((bits(h, 7, 7) << 3) | bits(h, 0, 2)))
+        elif m.group(4) == "S":
+            out.append(regh((bits(h, 6, 6) << 3) | bits(h, 3, 5)))
+        elif m.group(4) in "NO":
+            out.append(reglist(h, "lr" if m.group(4) == "N" else "pc"))
+        elif m.group(4) == "M":
+            out.append(reglist(h, "r8"))
+        elif m.group(4) == "c":
+            out.append("")
+    out.append(a[pos:])
+    s = "".join(out).replace("%11?hb", "").replace("\\t", " ")
+    return " ".join(s.split())
+
+
 def word32(rom, addr):
     if addr + 4 > len(rom):
         return None
@@ -107,12 +169,14 @@ def decode(rom, addr):
             if w & m == v:
                 h1, h2 = w >> 16, w & 0xFFFF
                 target = (addr + 4) + (sext(h1 & 0x7FF, 11) << 12) + 2 * (h2 & 0x7FF)
-                return 4, a, {"raw": w, "flow": "call", "target": target}
+                text = f"{a.split(chr(92))[0]} 0x{target:06x}"
+                text = " ".join(text.replace("%c", "").split())
+                return 4, a, {"raw": w, "flow": "call", "target": target, "text": text}
     h = struct.unpack_from("<H", rom, addr)[0]
     a = next((x for v, m, x in I16 if h & m == v), None)
     if a is None:
         return 2, "<undef>", {"raw": h}
-    info = {"raw": h}
+    info = {"raw": h, "text": render(a, h, addr)}
     head = a.split("\\")[0].split("%")[0].strip()
     if head.startswith("tj") and head != "tjex":
         cond = a.startswith("tj%8-11c")
@@ -178,7 +242,8 @@ def main():
                 extra += f"  lit=0x{info['literal']:06x}"
                 if info.get("value") is not None:
                     extra += f" val=0x{info['value']:08x}"
-            print(f"{a:06x}: {info['raw']:04x}  {asm:<52}{extra}")
+            text = info.get("text") or f"<undef 0x{info['raw']:04x}>"
+            print(f"{a:06x}: {info['raw']:04x}  {text:<52}{extra}")
         return
 
     ins = linear(rom, args.start, min(args.end, len(rom)))
@@ -216,7 +281,7 @@ def main():
         print("== immediate 0xDB / 0xBD sites ==")
         for a, _, asm, i in ins:
             if i.get("imm") in (0xDB, 0xBD):
-                print(f"  0x{a:06x}  {asm.split(chr(92))[0]}  #0x{i['imm']:02X}")
+                print(f"  0x{a:06x}  {i['text']}")
 
     if args.tables:
         print("== function pointer tables ==")

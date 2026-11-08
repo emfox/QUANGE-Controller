@@ -141,6 +141,8 @@ DB | CMD | SUB | [LEN] | [DATA...]
 | Query usage log | `DB 01 05` | `BD 08 05` |
 | **Set schedule (whole-list replace)** | `DB 08 08` + `Count` + `[HH MM 0D] × Count` | `BD 0D 08`, **but it may not reply**; always verify with `DB 01 07` |
 | Delete entries | `DB 00 08` + `Count` + `[HH MM 0D] × Count` | — |
+| **Query battery** | **`DB 00 03`** | `BD 02 03 <percent> 19` (measured `64 19` = 100%) |
+| **Read serial block** | **`DB 00 09`** | `BD 10 09` + 16 bytes (flash `0x43000`) |
 | Version | `DB 01 A4` | `BD 06 A2` + version field (parsed as `14`, see note below) |
 | Device info queries | `DB 01 A0` / `A2` / `A3` / `A5` / `A6` | see §3.5 (measured 2026-11-08) |
 | Device reset (old label, **not reproduced**) | `DB 01 A0` | replied `BD 01 A0 00`, device did not reset — see §3.5 |
@@ -295,12 +297,58 @@ Three measured constraints:
   This also explains the old conclusion "`DB 04 02` never replies on this firmware" — on 2026-11-08 two
   `DB 04 02` frames were sent back to back and the second immediately returned
   `BD 0E 02 00 00B4 0000 64 …`; the device is perfectly healthy.
-- Replies stay `BD <LEN> <TYPE> <DATA>` with `LEN` equal to the payload length (`0x11` = 17 bytes for `A3`).
+- Replies stay `BD <LEN> <TYPE> <DATA>`; the `LEN` formula differs per command (see §3.6), so it is not a payload length.
 - The device disconnects itself after 3–4 consecutive frames per connection; test in batches.
 
 > `DB 01 A0` was previously labelled "device reset", but **with no argument it only returns
 > `BD 01 A0 00` and the device does not reset** — the old label has no basis. Whether
 > `DB 01 A0 xx` resets was not tested (it would trigger the power-on auto cycle and disturb the rest).
+
+### 3.6 Full command map (from the firmware disassembly, 2026-11-08)
+
+Cross-checking hardware with the disassembly shows the firmware **dispatches on `frame[2]`**, not `frame[1]`:
+
+```
+DB <frame[1]> <frame[2]=cmd> <payload...>
+```
+
+`frame[1]` is a payload length for most commands but is not validated by all of them.
+The dispatcher sits at `0x506E` and disables interrupts on entry (clears IRQMODE at `0x800643`).
+Replies are built in a fixed buffer at `0x844ACC`: `[0]=0xBD`, `[1]=length`, `[2]=cmd` copied
+verbatim, `[3..]` payload. So **the second reply byte is a length and the third is the command**.
+
+`LEN` is not consistent across commands: `07` uses `1+12` (cmd byte + 12-byte table), `05` uses `8`
+(cmd byte + 7 bytes), `A3` uses `1+16`. **Do not validate with it** — parse by command byte.
+
+| `frame[2]` | Handler | Behaviour | Reply |
+| --- | --- | --- | --- |
+| `00` `01` | `0x5224` | Not implemented | `BD 01 00 xx` (trailing byte is buffer residue and changes) |
+| `02` | `0x5438` | State query + time sync | `BD 0E 02` + … (§5.1) |
+| `03` | `0x5424` | **Battery query**, reads RAM `0x8435A0` | `BD 02 03 <pct> 19` |
+| `04` | `0x555A` | Start/stop, or set schedule | `BD 0B 02` |
+| `05` | `0x551A` | Read one log record | `BD 08 05` + 8 bytes |
+| `06` | `0x5536` | Log ACK, then returns **the next** record | `BD 08 06` + 8 bytes |
+| `07` | `0x50F6` | Read the 4-slot table (3 B per slot, payload not parsed) | `BD 0D 07` + 12 bytes |
+| `08` | `0x51A4` | Write the table (payload parsed at `0x604C` first) | `BD 0D 08`, may not reply |
+| `09` | `0x5242` | **Read the serial block** (flash `0x43000`, 15 bytes) | `BD 10 09` + 16 bytes |
+| `A0` | `0x5382` | Housekeeping + load default table + branch (possibly factory reset, **unconfirmed**) | `BD 01 A0 00` |
+| `A2` | `0x52F2` | MAC: read; **writes only while the stored MAC is still `FF×6`** | `BD 07 A2` + 6 bytes + `00` |
+| `A3` | `0x53DC` | Serial: **writes** it when the block is blank, then returns it | `BD 11 A3` + 17 bytes |
+| `A4` | `0x564E` | Version, a **literal constant `"000014"`** (reply type hardcoded to `A2`) | `BD 06 A2` + `"000014"` |
+| `A5` | `0x566A` | Read-only MAC (reads `0x76000[0..5]` and reverses it) | `BD 07 A5` + 6 bytes + `00` |
+| `A6` | `0x5182` | **Erases sector `0x44000` and writes a single `01` byte** | none (default buffer) |
+
+Three commands carry **write side effects** — documented, but do not fire them casually:
+
+- `A2` overwrites the calibration block with the 6 payload bytes when the MAC at `0x76000` equals
+  `FF FF FF FF FF FF` (constant at `0xCDB4`). A provisioned unit never matches, but that check is
+  the only guard — one misread bit and you have rewritten the MAC.
+- `A3` **writes the frame content** when `0x43000` is blank (`0x5834` erases the sector, then writes
+  16 bytes). On this unit the block was empty; one `DB 01 A3` with no payload on 2026-11-08
+  turned it into `"LFWY020702/" + 27 BC 5D B2 00` — the trailing bytes came from buffer residue,
+  i.e. a serial number was **invented**. Always send a proper payload.
+- `A6` takes no argument and returns nothing: it erases `0x44000` and writes `01` (a marker).
+  It was sent once by accident on 2026-11-08; the sector was all `FF`, so nothing of value was lost.
 
 ---
 
@@ -427,6 +475,10 @@ BD 0E 02 | 00 | 00 B4 | 00 00 | 64 | 6A DA 5D 30 | 6A D9 F8 82
 `BD0D07` = query result, `BD0D08` = save acknowledged. Payload is the fixed-slot table described
 in section 4.
 
+Both replies carry **identical payloads** (12 bytes = 4 slots): `07` only reads the table, `08`
+parses the payload first and then reads it back. To verify a `08`, compare content — not the
+mere presence of a reply.
+
 ### 5.3 Logs (`BD0805` / `BD0806`)
 
 | hex index | Meaning |
@@ -481,9 +533,12 @@ synced. That is exactly what a queue is for.
 with zero overlap (table below), and even a power cycle on 11-07 did not bring them back.
 On 2026-11-08, six historical timestamps (including `00000000` and `FFFFFFFF`) were sent
 as acknowledgements to try to seek backwards — every one returned only `FFFFFFFF` (§8.5).
-⚠️ Whether this is a physical delete or a non-rewindable read marker cannot be distinguished
-at the BLE layer; **no conclusion**. Only observable behaviour is described below. Without
-an ack, a second `DB 01 05` **re-sends the same record** (not yet consumed).
+⚠️ The BLE layer cannot tell deletion from marking, but **the firmware answers it** (§3.6 and
+`docs/firmware-structure.en.md` §6): the records live in a 200 × 8 B table at flash `0x40000`,
+and the **queue index is a single byte at `0x45000`** — increment on append, decrement on
+acknowledge, `0xFF` = empty. An ack **only moves that byte; nothing is erased**, which is why
+all 200 slots still hold their history after the queue has been drained. Only observable
+behaviour is described below. Without an ack, a second `DB 01 05` **re-sends the same record**.
 
 Measured 2026-11-07, three consecutive connections with no sterilization in between:
 

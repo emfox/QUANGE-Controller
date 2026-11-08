@@ -24,6 +24,11 @@ data in this image — see static analysis §2.
 Key formulas: branch `target = addr+4 + 2*sext(disp)`; 32-bit call
 `target = addr+4 + (disp1<<12) + 2*disp2`, `lr = addr+4`; literal `((addr+4)&~3) + 4*imm8`.
 
+Operands are recovered straight from the bit fields embedded in the format strings
+(`%0-2r` = register in bits 0–2, `%6-10d` = immediate in bits 6–10, `%D`/`%S` take their high bit
+from bit 7/bit 6, a `tpush` list is bits 0–7 plus bit 8 = lr, condition codes are bits 8–11).
+That makes the listing readable: `tmov r1, #219` (= `0xDB`) and `[r6, #2]` come out directly.
+
 ## 1. Code / data layout
 
 | Range | Kind | Evidence |
@@ -62,13 +67,55 @@ Key formulas: branch `target = addr+4 + 2*sext(disp)`; 32-bit call
 | GATT attribute table | `0x507E`, `0x509C`, `0x530E`, `0x58E6` | → `0xCD44`/`0xCD54`/`0xCDB4`/`0xCDC8` |
 | Vendor string `LFWY020702/` | `0x569C`, `0x5848` | → `0xD098` |
 | Hex digit table | `0x122` | → `0xD3A4` |
-| **Log area `0x40000`** | **no literal references found** | §7 |
+| **Log area `0x40000`** | written at `0x59C2`, read at `0x5AFC`, acked at `0x5BA4` | the address is built on the fly with `tmov #imm8; tshftl #11`, so no literal pool entry exists |
 
-Immediates in the dispatch function: `DB BD 08 04 06 03 07 00 01 02 05 09 0B 0D 0E 0F 10 11 19 3C 86 88 A0 A2 A3 A5 A6 EC`.
-`DB/BD` are frame markers and `00 01 02 04 06 08` match the documented command codes.
-**`A0/A2/A3/A5/A6` are now confirmed on hardware as `DB 01 Ax` device-info queries**: `A2`/`A5` return
-the MAC, `A3` returns `LFWY020702/` + 6 bytes, `A4` returns version `"000014"`, `A6` an empty reply —
-see [protocol §3.5](protocol.en.md). `EC/86/88/3C` remain unverified.
+### 3.1 Complete command table
+
+The dispatcher at `0x506E` tests `frame[0]` for the `0xDB` marker, takes **`frame[2]`** as the command
+byte and spreads it through a binary comparison tree. Every reply is written into a fixed buffer at
+`0x844ACC`: `[0]=0xBD`, `[1]=length`, `[2]=command byte copied verbatim`. Each branch was verified on
+hardware (see [protocol §3.6](protocol.en.md)).
+
+| cmd | Handler | Behaviour |
+| --- | --- | --- |
+| `00` `01` | `0x5224` | not implemented, replies `BD 01 00 xx` |
+| `02` | `0x5438` | state query + time sync |
+| `03` | `0x5424` | battery (RAM `0x8435A0`) |
+| `04` | `0x555A` | start/stop, or write the schedule |
+| `05` | `0x551A` | read one log record (`0x5AFC`) |
+| `06` | `0x5536` | ack (`0x5BA4`), then fetch the next record |
+| `07` | `0x50F6` | read the 4-slot schedule table (3 B/slot) |
+| `08` | `0x51A4` | write the table (parsed at `0x604C` first) |
+| `09` | `0x5242` | read the serial block at `0x43000` |
+| `A0` | `0x5382` | housekeeping (`0x5C18`) + load default table (`0x5F90`) + branch |
+| `A2` | `0x52F2` | MAC read/write (write only while the stored MAC is `FFx6`) |
+| `A3` | `0x53DC` | serial number, written when the block is blank |
+| `A4` | `0x564E` | version, literal `"000014"` |
+| `A5` | `0x566A` | read-only MAC |
+| `A6` | `0x5182` | erase `0x44000` + write `01` |
+
+`EC` is not a command: it is the sector number in `0xEC << 11 = 0x76000` (calibration/MAC), and
+`86` (`0x43000` serial), `88` (`0x44000` marker), `80`/`82`/`84`/`8A`/`8C` work the same way.
+`3C` is still unexplained.
+
+### 3.2 Flash data layout (recovered from the address-building sites, checked against the image)
+
+| Offset | Content | Evidence |
+| --- | --- | --- |
+| `0x40000` | log table, 200 x 8 B = 1600 B (timestamp[4] big-endian / duration[2] / type[1] / `0xFF`) | `0x59C2` reads-modifies-writes the whole sector |
+| `0x41000` | config: `02 00 00 00 / B4 0F / 2C 01 00 00 …` (2 entries, 4020, 300) | `0x453A`, `0x5C32` |
+| `0x42000` | 4-byte persistent value (measured `55`) | `0x5924`/`0x5934` |
+| `0x43000` | 16-byte serial string (blank, `FFx16`, from the factory) | `0x5242`/`0x53E4`/`0x5834` |
+| `0x44000` | marker sector, the target of `A6` (all `FF` from the factory) | `0x518E`/`0x5196` |
+| `0x45000` | **1-byte log queue index**: +1 on append, -1 on ack, `0xFF` = empty | `0x59D0`/`0x5B36`/`0x5BE2` |
+| `0x46000` | 4-byte timestamp (measured `6AEFE8EE`, equal to the newest log record) | `0x592C`/`0x5940` |
+| `0x76000` | 8-byte calibration: the first 6 bytes reversed are the MAC | `0x5300`/`0x5674` |
+
+The log is a **stack**: append writes `index+1`, an ack writes `index-1`, so records are consumed
+**newest first**, and `0xFF` means empty. **An ack only moves that one byte — nothing is erased**,
+which is why all 200 slots still hold their history after 45 acknowledgements. Each append rewrites
+the whole 1600 B block (read-modify-write of the entire sector), so flash wear is one sector erase
+per logged record.
 
 ## 4. Two function pointer tables
 
@@ -104,7 +151,9 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 2. Two function pointer tables with 34 indirect entries (§4).
 3. The 4 KiB `0x3000–0x3FFF` region has **no code references at all** (0 calls, 0 literals) —
    more likely a reserved/calibration sector than a "low-entropy data table".
-4. Exact addresses of command dispatch and reply builders (§3).
+4. Exact addresses of command dispatch and reply builders (§3); **the whole command table and the
+   flash data layout** (§3.1, §3.2) — including `03` (battery), `09` (serial block) and `A6`
+   (erase the marker sector), none of which appear anywhere in the protocol doc.
 5. `0x800740` used by 40 functions: much of the logic is tick-based soft timing, consistent with the
    two time bases observed in the log records.
 
@@ -113,13 +162,11 @@ Of 1,688 literal references: RAM `0x84xxxx` 867, IO registers 384, code/constant
 - Semantics of the 64 x `0x06C0` vector slots; header field `0x0C`; vendor checksum algorithm.
 - Purpose of the `0xD2A8` constant block and the `0x3000` near-zero region.
 - What each of the 34 indirect entries does; whether `0x2EA0` is the main loop.
-- Which command each dispatch case handles; `EC/86/88/3C` and top-level unknown codes are unverified
-  (`A0/A2/A3/A5/A6` are confirmed on hardware, see §3).
-- **Code path for scheduling and log persistence**: `0x40000` has no direct reference; only two
-  `0x3FF00` literals (`@0xB254`, `@0xB572`) and several `tmov #0x40` were found. Sector-number-based
-  access is suspected but unproven.
+- What `A0` really does: `0x5382` calls `0x5C18` (clears a few sectors once uptime > 300 s) and
+  `0x5F90` (overwrites the RAM schedule table with defaults), then branches on `0x84358C[1]`.
+  **Not tested** — it may clobber device state.
+- The `3C` constant; who is served by the 3-entry software timer array at `0x842F34` (`0x41B4`).
 - `0x800Fxx` / `0x80000C/D` register roles; which GPIO drives the UV/disinfection load.
-- Whether undocumented BLE commands or debug entry points exist.
 - No symbol table: functions can only be labelled by address and reference, not named automatically.
 
 ## 8. Suggested next steps
